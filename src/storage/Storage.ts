@@ -90,6 +90,16 @@ export class InMemoryStorage implements Storage {
         return Array.from(this.data.keys());
     }
 
+    values(): Buffer[] {
+        this.ensureOpen();
+        return Array.from(this.data.values());
+    }
+
+    entries(): [string, Buffer][] {
+        this.ensureOpen();
+        return Array.from(this.data.entries());
+    }
+
     clear(): void {
         this.ensureOpen();
         this.data.clear();
