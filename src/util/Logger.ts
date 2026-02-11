@@ -56,9 +56,11 @@ export class ConsoleLogger implements Logger {
     }
 }
 
+/*
 const MyLogger = new ConsoleLogger('node 5', 'info');
 
 MyLogger.debug("this is a debug message");
 MyLogger.info("this is an info message", { someKey: "someValue" });
 MyLogger.warn("this is a warning message");
 MyLogger.error("this is an error message", { errorCode: 123 });
+*/

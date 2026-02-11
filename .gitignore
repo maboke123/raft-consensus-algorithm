@@ -1,4 +1,9 @@
 *
 
+!*/
+
 !*.ts
+!*.spec.ts
 !*.gitignore
+
+*node_modules/
