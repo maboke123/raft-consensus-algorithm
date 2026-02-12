@@ -86,3 +86,12 @@ export class InvalidStateError extends RaftError {
     }
 }
 
+export class PersistentStateError extends RaftError {
+    constructor(
+        message: string, public readonly cause?: Error
+    ) {
+        super(message, 'PERSISTENT_STATE_ERROR');
+        this.name = 'PersistentStateError';
+        Object.setPrototypeOf(this, PersistentStateError.prototype);
+    }
+}

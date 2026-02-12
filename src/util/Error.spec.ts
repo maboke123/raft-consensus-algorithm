@@ -6,7 +6,8 @@ import { RaftError,
          NetworkError,
          TermMismatchError,
          TimeoutError,
-         InvalidStateError
+         InvalidStateError,
+         PersistentStateError
  } from "./Error";
 
 describe('Error.ts, RaftError', () => {
@@ -168,5 +169,32 @@ describe('Error.ts, InvalidStateError', () => {
         expect(error.code).toBe('INVALID_STATE');
         expect(error.fromState).toBe('Follower');
         expect(error.toState).toBe('Leader');
+    });
+});
+
+describe('Error.ts, PersistentStateError', () => {
+    it('should create a PersistentStateError with message and cause', () => {
+        const cause = new Error('Underlying persistent state error');
+        const error = new PersistentStateError('Persistent state error occurred', cause);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(RaftError);
+        expect(error).toBeInstanceOf(PersistentStateError);
+        expect(error.stack).toBeDefined();
+        expect(error.name).toBe('PersistentStateError');
+        expect(error.message).toBe('Persistent state error occurred');
+        expect(error.code).toBe('PERSISTENT_STATE_ERROR');
+        expect(error.cause).toBe(cause);
+    });
+
+    it('should create a PersistentStateError with message and no cause', () => {
+        const error = new PersistentStateError('Persistent state error occurred');
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(RaftError);
+        expect(error).toBeInstanceOf(PersistentStateError);
+        expect(error.stack).toBeDefined();
+        expect(error.name).toBe('PersistentStateError');
+        expect(error.message).toBe('Persistent state error occurred');
+        expect(error.code).toBe('PERSISTENT_STATE_ERROR');
+        expect(error.cause).toBeUndefined();
     });
 });
