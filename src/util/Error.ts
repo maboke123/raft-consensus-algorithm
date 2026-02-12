@@ -105,3 +105,13 @@ export class VolatileStateError extends RaftError {
         Object.setPrototypeOf(this, VolatileStateError.prototype);
     }
 }
+
+export class LeaderStateError extends RaftError {
+    constructor(
+        message: string, public readonly cause?: Error
+    ) {
+        super(message, 'LEADER_STATE_ERROR');
+        this.name = 'LeaderStateError';
+        Object.setPrototypeOf(this, LeaderStateError.prototype);
+    }
+}

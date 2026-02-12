@@ -8,7 +8,8 @@ import { RaftError,
          TimeoutError,
          InvalidStateError,
          PersistentStateError,
-         VolatileStateError
+         VolatileStateError,
+         LeaderStateError
  } from "./Error";
 
 describe('Error.ts, RaftError', () => {
@@ -223,6 +224,33 @@ describe('Error.ts, VolatileStateError', () => {
         expect(error.name).toBe('VolatileStateError');
         expect(error.message).toBe('Volatile state error occurred');
         expect(error.code).toBe('VOLATILE_STATE_ERROR');
+        expect(error.cause).toBeUndefined();
+    });
+});
+
+describe('Error.ts, LeaderStateError', () => {
+    it('should create a LeaderStateError with message and cause', () => {
+        const cause = new Error('Underlying leader state error');
+        const error = new LeaderStateError('Leader state error occurred', cause);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(RaftError);
+        expect(error).toBeInstanceOf(LeaderStateError);
+        expect(error.stack).toBeDefined();
+        expect(error.name).toBe('LeaderStateError');
+        expect(error.message).toBe('Leader state error occurred');
+        expect(error.code).toBe('LEADER_STATE_ERROR');
+        expect(error.cause).toBe(cause);
+    });
+
+    it('should create a LeaderStateError with message and no cause', () => {
+        const error = new LeaderStateError('Leader state error occurred');
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toBeInstanceOf(RaftError);
+        expect(error).toBeInstanceOf(LeaderStateError);
+        expect(error.stack).toBeDefined();
+        expect(error.name).toBe('LeaderStateError');
+        expect(error.message).toBe('Leader state error occurred');
+        expect(error.code).toBe('LEADER_STATE_ERROR');
         expect(error.cause).toBeUndefined();
     });
 });
