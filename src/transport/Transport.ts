@@ -84,7 +84,7 @@ export class MockTransport implements Transport {
 
     setDropRate(dropRate: number): void {
 
-        if (!Number.isInteger(dropRate) || dropRate < 0 || dropRate > 1) {
+        if (!Number(dropRate) || dropRate < 0 || dropRate > 1) {
             throw new NetworkError(`Invalid drop rate: ${dropRate}. Drop rate must be a number between 0 and 1.`);
         }
         this.dropRate = dropRate;
