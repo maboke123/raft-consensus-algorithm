@@ -314,6 +314,36 @@ export class LogManager implements LogManagerInterface {
         await this.deleteEntriesFrom(1);
     }
 
+    async getEntriesFromIndex(index: number): Promise<LogEntry[]> {
+        this.ensureInitialized();
+
+        if (index < 1) {
+            throw new LogInconsistencyError(`Invalid fromIndex: ${index} is less than 1`);
+        }
+
+        if (index > this.lastIndex) {
+            return [];
+        }
+
+        return await this.getEntries(index, this.lastIndex + 1);
+    }
+
+    async appendEntriesFrom(prevLogIndex: number, entries: LogEntry[]): Promise<number> {
+        this.ensureInitialized();
+
+        if (entries.length === 0) {
+            return this.lastIndex;
+        }
+
+        await this.deleteEntriesFrom(prevLogIndex + 1);
+
+        if (this.lastIndex !== prevLogIndex) {
+            throw new LogInconsistencyError(`After deleting entries from index ${prevLogIndex + 1}, last index is ${this.lastIndex} but expected ${prevLogIndex}`);
+        }
+
+        return await this.appendEntries(entries);
+    }
+
     private async safeStorage<T>(fn : () => Promise<T>, context: string): Promise<T> {
         try {
             return await fn();

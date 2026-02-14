@@ -7,6 +7,7 @@ import { LogManager } from "../log/LogManager";
 import { RPCHandler } from "../rpc/RPCHandler";
 import { TimerManager } from "../timing/TimerManager";
 import { Logger } from "../util/Logger";
+import { RaftError } from "../util/Error";
 
 
 export enum RaftState {
@@ -117,7 +118,23 @@ export class StateMachine implements StateMachineInterface {
     }
 
     async becomeLeader(): Promise<void> {
-        // TODO
+        if (!this.leaderState) {
+            throw new RaftError("LeaderState is required to become Leader", "LEADER_STATE_REQUIRED");
+        }
+
+        this.currentState = RaftState.Leader;
+        this.currentLeader = this.nodeId;
+
+        const currentTerm = this.persistentState.getCurrentTerm();
+        const lastLogIndex = this.logManager.getLastIndex();
+
+        this.logger.info(`Node ${this.nodeId} became Leader for term ${currentTerm}, last log index: ${lastLogIndex}`);
+
+        this.leaderState.initialize(lastLogIndex);
+
+        this.timerManager.startHeartbeatTimer(() => this.sendHeartbeats());
+
+        await this.sendHeartbeats();
     }
 
     async handleRequestVote(from: NodeId, request: RequestVoteRequest): Promise<RequestVoteResponse> {
@@ -142,7 +159,7 @@ export class StateMachine implements StateMachineInterface {
     private async requestVotes(): Promise<void> {
         const currentTerm = this.persistentState.getCurrentTerm();
         const lastLogIndex = this.logManager.getLastIndex();
-        const lastLogTerm = await this.logManager.getTermAtIndex(lastLogIndex) ?? 0;
+        const lastLogTerm = this.logManager.getLastTerm();
 
         const request: RequestVoteRequest = {
             term: currentTerm,
@@ -203,6 +220,107 @@ export class StateMachine implements StateMachineInterface {
 
         } else {
             this.logger.info(`Node ${this.nodeId} received vote denial from ${from}`);
+        }
+    }
+
+    private async sendHeartbeats(): Promise<void> {
+        if (this.currentState !== RaftState.Leader) {
+            return;
+        }
+
+        if (!this.leaderState) {
+            throw new RaftError("LeaderState is required to send heartbeats", "LEADER_STATE_REQUIRED");
+        }
+
+        for (const peer of this.peers) {
+            this.sendAppendEntries(peer);
+        }
+    }
+
+    private async sendAppendEntries(peer: NodeId): Promise<void> {
+
+        if (!this.leaderState) {
+            throw new RaftError("LeaderState is required to handle AppendEntriesResponse", "LEADER_STATE_REQUIRED");
+        }
+
+        const currentTerm = this.persistentState.getCurrentTerm();
+        const nextIndex = this.leaderState!.getNextIndex(peer);
+        const prevLogIndex = nextIndex - 1;
+        const prevLogTerm = await this.logManager.getTermAtIndex(prevLogIndex) ?? 0;
+
+        const entries = await this.logManager.getEntriesFromIndex(nextIndex);
+
+        const request: AppendEntriesRequest = {
+            term: currentTerm,
+            leaderId: this.nodeId,
+            prevLogIndex,
+            prevLogTerm,
+            entries,
+            leaderCommit: this.volatileState.getCommitIndex()
+        };
+
+        try {
+            const response: AppendEntriesResponse = await this.rpcHandler.sendAppendEntries(peer, request);
+            await this.handleAppendEntriesResponse(peer, response);
+        } catch (err) {
+            if (err instanceof Error) {
+                this.logger.error(`Node ${this.nodeId} error sending AppendEntries to ${peer}: ${err.message}`);
+            } else {
+                this.logger.error(`Node ${this.nodeId} error sending AppendEntries to ${peer}: ${String(err)}`);
+            }
+        }
+    }
+
+    private async handleAppendEntriesResponse(from: NodeId, response: AppendEntriesResponse): Promise<void> {
+
+        if (!this.leaderState) {
+            throw new RaftError("LeaderState is required to handle AppendEntriesResponse", "LEADER_STATE_REQUIRED");
+        }
+
+        const currentTerm = this.persistentState.getCurrentTerm();
+
+        if (response.term > currentTerm) {
+            this.logger.info(`Node ${this.nodeId} received higher term ${response.term} from ${from}, becoming Follower`);
+            await this.becomeFollower(response.term, null);
+            return;
+        }
+
+        if (response.term !== currentTerm) {
+            this.logger.info(`Node ${this.nodeId} received AppendEntriesResponse from ${from} with term ${response.term} but current term is ${currentTerm}`);
+            return;
+        }
+
+        if(this.currentState !== RaftState.Leader) {
+            this.logger.info(`Node ${this.nodeId} received AppendEntriesResponse from ${from} but is no longer a Leader`);
+            return;
+        }
+
+        if (response.success) {
+            if(response.matchIndex === undefined) {
+                this.logger.error(`Node ${this.nodeId} received AppendEntriesResponse from ${from} with undefined matchIndex`);
+                return;
+            }
+
+            this.leaderState.updateMatchIndex(from, response.matchIndex);
+            this.logger.info(`Node ${this.nodeId} received successful AppendEntriesResponse from ${from}, matchIndex: ${response.matchIndex}`);
+            await this.tryAdvanceCommitIndex();
+        }
+    }
+
+    private async tryAdvanceCommitIndex(): Promise<void> {
+
+        if (!this.leaderState) {
+            throw new RaftError("LeaderState is required to advance commit index", "LEADER_STATE_REQUIRED");
+        }
+
+        const currentTerm = this.persistentState.getCurrentTerm();
+        const newCommitIndex = await this.leaderState.calculateCommitIndex(currentTerm, this.logManager);
+
+        const currentCommitIndex = this.volatileState.getCommitIndex();
+
+        if (newCommitIndex > currentCommitIndex) {
+            this.volatileState.setCommitIndex(newCommitIndex);
+            this.logger.info(`Node ${this.nodeId} advanced commit index to ${newCommitIndex}`);
         }
     }
 }
