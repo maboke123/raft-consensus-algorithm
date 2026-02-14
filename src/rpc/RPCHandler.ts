@@ -12,7 +12,7 @@ import { RequestVoteRequest,
         } from "./RPCTypes";
 import { Transport } from "../transport/Transport";
 import { Logger } from "../util/Logger";
-import { Clock } from "../timing/Clock";
+import { Clock, TimerHandle } from "../timing/Clock";
 import { RPCHandlerError, NetworkError } from "../util/Error";
 
 export interface RPCSendOptions {
@@ -84,19 +84,33 @@ export class RPCHandler implements RPCHandlerInterface {
     private async sendWithTimeout(peerId: NodeId, message: RPCMessage, options?: RPCSendOptions): Promise<RPCMessage> {
 
         const timeoutMs = options?.timeoutMs ?? RPCHandler.default_timeout_ms;
+        let timeoutHandle: TimerHandle | null = null;
 
         const timeoutPromise: Promise<RPCMessage> = new Promise((_resolve, reject) => {
-            this.clock.setTimeout(() => {
+            timeoutHandle = this.clock.setTimeout(() => {
                 reject(new RPCHandlerError(`RPC to ${peerId} timed out after ${timeoutMs} ms`));
             }, timeoutMs);
         });
 
         try {
-            return await Promise.race<RPCMessage>([
+
+            const result = await Promise.race<RPCMessage>([
                 this.transport.send(peerId, message),
                 timeoutPromise
             ]);
+
+            if (timeoutHandle !== null) {
+                this.clock.clearTimeout(timeoutHandle);
+            }
+
+            return result;
+
         } catch (error) {
+
+            if (timeoutHandle !== null) {
+                this.clock.clearTimeout(timeoutHandle);
+            }
+
             if (error instanceof RPCHandlerError) {
                 this.logger.warn('RPC timeout', { to: peerId, messageType: message.type, timeoutMs });
             } else if (error instanceof NetworkError) {
