@@ -205,19 +205,22 @@ export class RaftNode implements RaftNodeInterface {
 
         try {
             const term = this.persistentState.getCurrentTerm();
-            const idx = this.logManager.getLastIndex() + 1;
 
-            const entry: LogEntry = {
-                index: idx,
-                term: term,
-                command: command
-            };
+            const idx = await this.logManager.appendCommand(command, term);
 
-            await this.logManager.appendEntry(entry);
+            if (!this.stateMachine.isLeader() || this.persistentState.getCurrentTerm() !== term) {
+                this.logger.warn(`Node ${this.config.nodeId} is no longer the leader or term has changed after appending command. Current term: ${this.persistentState.getCurrentTerm()}, expected term: ${term}`);
+                return { success: false, leaderId: this.stateMachine.getCurrentLeader() ?? undefined, error: 'Not the leader or term has changed' };
+            }
 
             this.logger.info(`Leader ${this.config.nodeId} appended command to log at index ${idx} for term ${term}`);
 
             await this.triggerReplication();
+
+            if (!this.stateMachine.isLeader() || this.persistentState.getCurrentTerm() !== term) {
+                this.logger.warn(`Node ${this.config.nodeId} is no longer the leader or term has changed after triggering replication. Current term: ${this.persistentState.getCurrentTerm()}, expected term: ${term}`);
+                return { success: false, leaderId: this.stateMachine.getCurrentLeader() ?? undefined, error: 'Not the leader or term has changed' };
+            }
 
             const committed = await this.waitForCommit(idx, 5000);
 

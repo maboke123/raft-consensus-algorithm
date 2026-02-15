@@ -1,6 +1,7 @@
-import { LogEntry, validateLogEntry } from './LogEntry';
+import { LogEntry, validateLogEntry, Command } from './LogEntry';
 import { StorageError, LogInconsistencyError } from '../util/Error';
 import { Storage, StorageOperation, StorageCodec } from '../storage/Storage';
+
 
 export interface LogManagerInterface {
     initialize(): Promise<void>;
@@ -386,6 +387,21 @@ export class LogManager implements LogManagerInterface {
         }
 
         return { conflictIndex, conflictTerm };
+    }
+
+    async appendCommand(command: Command, term: number): Promise<number> {
+
+        const idx = this.lastIndex + 1;
+
+        const entry: LogEntry = {
+            index: idx,
+            term: term,
+            command: command
+        };
+
+        await this.appendEntry(entry);
+
+        return idx;
     }
 
     private async safeStorage<T>(fn : () => Promise<T>, context: string): Promise<T> {
