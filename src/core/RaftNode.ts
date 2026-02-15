@@ -58,7 +58,6 @@ export class RaftNode implements RaftNodeInterface {
 
     private applyLock: AsyncLock = new AsyncLock();
     private commandLock: AsyncLock = new AsyncLock();
-    private rpcLock: AsyncLock = new AsyncLock();
 
     constructor(
         private config: RaftConfig,
@@ -147,15 +146,11 @@ export class RaftNode implements RaftNodeInterface {
             this.transport.onMessage(async (from, message) => {
                 return await this.rpcHandler.handleIncomingMessage(from, message, {
                     onRequestVote: async (request, from) => {
-                        return await this.rpcLock.runExclusive(async () => {
-                            return await this.stateMachine.handleRequestVote(request, from);
-                        });
+                        return await this.stateMachine.handleRequestVote(request, from);
                     },
 
                     onAppendEntries: async (request, from) => {
-                        return await this.rpcLock.runExclusive(async () => {
-                            return await this.stateMachine.handleAppendEntries(request, from);
-                        });
+                        return await this.stateMachine.handleAppendEntries(request, from);
                     }
                 });
             });
