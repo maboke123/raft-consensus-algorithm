@@ -312,6 +312,12 @@ export class RaftNode implements RaftNodeInterface {
                 try {
                     await this.applyCommittedEntries();
                 } catch (error) {
+                    if (error instanceof RaftError && error.code === 'ApplyEntryFailed') {
+                        this.logger.error(`Failed to apply log entry, stopping node to prevent inconsistency`, error);
+                        this.applyLoopRunning = false;
+
+                        process.exit(1);
+                    }
                     this.logger.error(`Error in apply loop`, error as Error);
                 }
 
