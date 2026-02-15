@@ -51,6 +51,7 @@ export class StateMachine implements StateMachineInterface {
         private rpcHandler: RPCHandler,
         private timerManager: TimerManager,
         private logger: Logger,
+        private onCommitIndexAdvanced?: (newCommitIndex: number) => void
     ) {}
 
     async start(): Promise<void> {
@@ -268,6 +269,8 @@ export class StateMachine implements StateMachineInterface {
                 const newCommitIndex = Math.min(leaderCommit, lastNewEntryIndex);
                 this.volatileState.setCommitIndex(newCommitIndex);
                 this.logger.info(`Node ${this.nodeId} updated commit index to ${newCommitIndex} based on leader ${from}`);
+
+                this.onCommitIndexAdvanced?.(newCommitIndex);
             }
 
             const matchIndex = request.prevLogIndex + request.entries.length;
@@ -453,7 +456,7 @@ export class StateMachine implements StateMachineInterface {
 
     private async sendAppendEntries(peer: NodeId): Promise<void> {
 
-        let request: AppendEntriesRequest
+        let request: AppendEntriesRequest;
 
         try {
             await this.stateLock.runExclusive(async () => {
@@ -468,7 +471,7 @@ export class StateMachine implements StateMachineInterface {
 
                 const entries = await this.logManager.getEntriesFromIndex(nextIndex);
 
-                const request = {
+                request = {
                     term: currentTerm,
                     leaderId: this.nodeId,
                     prevLogIndex,
@@ -555,6 +558,8 @@ export class StateMachine implements StateMachineInterface {
         if (newCommitIndex > currentCommitIndex) {
             this.volatileState.setCommitIndex(newCommitIndex);
             this.logger.info(`Node ${this.nodeId} advanced commit index to ${newCommitIndex}`);
+
+            this.onCommitIndexAdvanced?.(newCommitIndex);
         }
     }
 }

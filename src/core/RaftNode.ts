@@ -59,6 +59,8 @@ export class RaftNode implements RaftNodeInterface {
     private applyLock: AsyncLock = new AsyncLock();
     private commandLock: AsyncLock = new AsyncLock();
 
+    private commitWaiters: Map<number, Array<(Commited: boolean) => void>> = new Map();
+
     constructor(
         private config: RaftConfig,
         private storage: Storage,
@@ -109,6 +111,7 @@ export class RaftNode implements RaftNodeInterface {
             this.rpcHandler,
             this.timerManager,
             this.logger,
+            (newCommitIndex) => this.notifyCommitWaiters(newCommitIndex)
         );
     }
 
@@ -375,24 +378,73 @@ export class RaftNode implements RaftNodeInterface {
     }
 
     private async waitForCommit(index: number, timeoutMs: number, term: number): Promise<boolean> {
-        const startTime = this.clock.now();
+        return new Promise<boolean>((resolve) => {
+            const startTime = this.clock.now();
 
-        while (this.clock.now() - startTime < timeoutMs) {
-
-            if (!this.stateMachine.isLeader() || this.persistentState.getCurrentTerm() !== term) {
-                this.logger.warn(`Node ${this.config.nodeId} is no longer the leader or term has changed while waiting for commit. Current term: ${this.persistentState.getCurrentTerm()}, expected term: ${term}`);
-                return false;
+            if (this.volatileState.getCommitIndex() >= index) {
+                resolve(true);
+                return;
             }
 
-            const committedIndex = this.volatileState.getCommitIndex();
-
-            if (committedIndex >= index) {
-                return true;
+            if (!this.commitWaiters.has(index)) {
+                this.commitWaiters.set(index, []);
             }
 
-            await new Promise<void>(resolve => this.clock.setTimeout(() => resolve(), 10));
+            const callback = (committed: boolean) => {
+                resolve(committed);
+            }
+
+            this.commitWaiters.get(index)!.push(callback);
+
+            const timeoutHandle = this.clock.setTimeout(() => {
+                const waiters = this.commitWaiters.get(index);
+                if (waiters) {
+                    const idx = waiters.indexOf(callback)
+                    if (idx !== -1) {
+                        waiters.splice(idx, 1);
+                    }
+                    if (waiters.length === 0) {
+                        this.commitWaiters.delete(index);
+                    }
+                }
+
+                const committed = this.volatileState.getCommitIndex() >= index;
+                resolve(committed)
+            }, timeoutMs);
+
+            const checkLeadership = () => {
+                if (!this.stateMachine.isLeader() || this.persistentState.getCurrentTerm() !== term) {
+
+                    this.clock.clearTimeout(timeoutHandle);
+
+                    const waiters = this.commitWaiters.get(index);
+                    if (waiters) {
+                        const idx = waiters.indexOf(callback);
+                        if (idx !== -1) {
+                            waiters.splice(idx, 1);
+                        }
+                    }
+
+                    resolve(false);
+                    return;
+                }
+
+                if (this.clock.now() - startTime < timeoutMs) {
+                    this.clock.setTimeout(checkLeadership, 100);
+                }
+            };
+
+            this.clock.setTimeout(checkLeadership, 100);
+        });
+    }
+
+    private notifyCommitWaiters(newCommitIndex: number): void {
+        for (const [index, resolvers] of this.commitWaiters.entries()) {
+            if (index <= newCommitIndex) {
+                resolvers.forEach(resolve => resolve(true));
+                this.commitWaiters.delete(index);
+            }
         }
-        return false;
     }
 }
 
