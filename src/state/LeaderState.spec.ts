@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { LeaderState } from "./LeaderState";
 import { LeaderStateError } from "../util/Error";
+import { get } from "node:http";
 
 describe('LeaderState.ts, LeaderState', () => {
     const peers = ['node1', 'node2', 'node3'];
@@ -44,6 +45,14 @@ describe('LeaderState.ts, LeaderState', () => {
     it('should throw for negative next index', () => {
         const leaderState = new LeaderState(peers, lastLogIndex);
         expect(() => leaderState.setNextIndex('node1', -1)).toThrow(LeaderStateError);
+    });
+
+    it('should not allow setting next index less than or equal to match index', () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        expect(leaderState.getNextIndex('node1')).toBe(lastLogIndex + 1);
+        expect(leaderState.getMatchIndex('node1')).toBe(0);
+        leaderState.setNextIndex('node1', 0);
+        expect(leaderState.getNextIndex('node1')).toBe(1);
     });
 
     it('should set next index to match index + 1 when next index is less than or equal to match index', () => {
@@ -335,5 +344,94 @@ describe('LeaderState.ts, LeaderState', () => {
         const leaderState = new LeaderState(peers, lastLogIndex);
         (leaderState as any)['matchIndex'].clear();
         expect(() => leaderState.getMajorityMatchIndex(5)).toThrow(LeaderStateError);
+    });
+
+    it('should set next index to conflict index when conflict term is 0', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const logManager = {
+            getLastIndex: vi.fn(),
+            getTermAtIndex: vi.fn()
+        } as any;
+        await leaderState.updateNextIndexWithConflict('node1', 3, 0, logManager);
+        expect(leaderState.getNextIndex('node1')).toBe(3);
+    });
+
+    it('should set next index to last index of termm + 1 when term is found in log', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const logManager = {
+            getLastIndex: vi.fn().mockReturnValue(5),
+            getTermAtIndex: vi.fn().mockImplementation(async (idx: number) => {
+                const terms: { [index: number]: number } = { 5:3, 4:3, 3:2, 2:1, 1:1 };
+                return terms[idx];
+            })
+        } as any;
+        await leaderState.updateNextIndexWithConflict('node1', 2, 2, logManager);
+        expect(leaderState.getNextIndex('node1')).toBe(4);
+    });
+
+    it('should fall back to conflict index when term is not found in log', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const logManager = {
+            getLastIndex: vi.fn().mockReturnValue(5),
+            getTermAtIndex: vi.fn().mockResolvedValue(1)
+        } as any;
+        await leaderState.updateNextIndexWithConflict('node1', 3, 2, logManager);
+        expect(leaderState.getNextIndex('node1')).toBe(3);
+    });
+
+    it('should set next indexx to minimum of 1 when result would be less than 1', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const logManager = {
+            getLastIndex: vi.fn(),
+            getTermAtIndex: vi.fn()
+        } as any;
+        const getNextIndexSpy = vi.spyOn(leaderState, 'getNextIndex')
+        const setNextIndexSpy = vi.spyOn(leaderState, 'setNextIndex')
+
+        getNextIndexSpy.mockReturnValueOnce(0);
+        getNextIndexSpy.mockRestore();
+
+        vi.spyOn(leaderState, 'getNextIndex').mockReturnValueOnce(0);
+
+        await leaderState.updateNextIndexWithConflict('node1', 0, 0, logManager);
+
+        expect(setNextIndexSpy).toHaveBeenCalledWith('node1', 1);
+        expect(leaderState.getNextIndex('node1')).toBe(1);
+    });
+
+    it('should throw for invalid peer', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const logManager = {
+            getLastIndex: vi.fn(),
+            getTermAtIndex: vi.fn()
+        } as any;
+        await expect(leaderState.updateNextIndexWithConflict('invalidNode', 3, 0, logManager)).rejects.toThrow(LeaderStateError);
+    });
+
+    it('should stop searching when a term is found that is less than the conflict term', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const getTermAtIndexMock = vi.fn().mockImplementation(async (idx: number) => {
+            const terms: { [index: number]: number } = { 5:4, 4:3, 3:1, 2:1, 1:1 };
+            return terms[idx];
+        });
+        const logManager = {
+             getLastIndex: vi.fn().mockReturnValue(5),
+             getTermAtIndex: getTermAtIndexMock
+        } as any;
+        await leaderState.updateNextIndexWithConflict('node1', 3, 2, logManager);
+        expect(leaderState.getNextIndex('node1')).toBe(3);
+        expect(getTermAtIndexMock).not.toHaveBeenCalledWith(2);
+        expect(getTermAtIndexMock).not.toHaveBeenCalledWith(1);
+    });
+
+    it('should treat missing log entries as having term 0 in findLastIndexOfTerm', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        const logManager = {
+             getLastIndex: vi.fn().mockReturnValue(5),
+             getTermAtIndex: vi.fn().mockResolvedValue(undefined)
+        } as any;
+        await leaderState.updateNextIndexWithConflict('node1', 3, 2, logManager);
+        expect(leaderState.getNextIndex('node1')).toBe(3);
+        expect(logManager.getTermAtIndex).toHaveBeenCalledTimes(1);
     });
 });
