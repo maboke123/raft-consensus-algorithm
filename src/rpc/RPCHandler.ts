@@ -99,17 +99,13 @@ export class RPCHandler implements RPCHandlerInterface {
                 timeoutPromise
             ]);
 
-            if (timeoutHandle !== null) {
-                this.clock.clearTimeout(timeoutHandle);
-            }
+            this.clock.clearTimeout(timeoutHandle!);
 
             return result;
 
         } catch (error) {
 
-            if (timeoutHandle !== null) {
-                this.clock.clearTimeout(timeoutHandle);
-            }
+            this.clock.clearTimeout(timeoutHandle!);
 
             if (error instanceof RPCHandlerError) {
                 this.logger.warn('RPC timeout', { to: peerId, messageType: message.type, timeoutMs });
