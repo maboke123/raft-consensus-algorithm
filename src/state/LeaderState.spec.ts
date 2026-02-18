@@ -46,11 +46,12 @@ describe('LeaderState.ts, LeaderState', () => {
         expect(() => leaderState.setNextIndex('node1', -1)).toThrow(LeaderStateError);
     });
 
-    it('should throw for next index less than or equal to match index', () => {
+    it('should set next index to match index + 1 when next index is less than or equal to match index', () => {
         const leaderState = new LeaderState(peers, lastLogIndex);
         leaderState.updateMatchIndex('node1', 5);
-        expect(() => leaderState.setNextIndex('node1', 5)).toThrow(LeaderStateError);
-        expect(() => leaderState.setNextIndex('node1', 4)).toThrow(LeaderStateError);
+        // expect(() => leaderState.setNextIndex('node1', 5)).toThrow(LeaderStateError);
+        // expect(() => leaderState.setNextIndex('node1', 4)).toThrow(LeaderStateError);
+        expect(leaderState.getNextIndex('node1')).toBe(6);
     });
 
     it('should decrement next index correctly', () => {

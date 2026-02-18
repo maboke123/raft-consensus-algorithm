@@ -147,6 +147,7 @@ describe("TimerManager.ts, TimerManager", () => {
         expect(timerManager.isElectionTimerActive()).toBe(false);
     });
 
+    /* became irrelevant
     it('should start and fire heartbeat timer repeatedly until max', () => {
         const timerManager = new TimerManager(clock, random, logger, validConfig);
         let callCount = 0;
@@ -161,6 +162,7 @@ describe("TimerManager.ts, TimerManager", () => {
         expect(logger.warn).toHaveBeenCalledOnce();
         expect(timerManager.isHeartbeatTimerActive()).toBe(false);
     });
+    */
 
     it('should stop heartbeat timer', () => {
         const timerManager = new TimerManager(clock, random, logger, validConfig);

@@ -76,6 +76,15 @@ describe("Transport.ts, MockTransport", () => {
             expect(from).toBe("A");
             expect(message).toEqual(validMessage);
             handlerCalled = true;
+            
+            return {
+                type: 'RequestVote',
+                direction: 'response',
+                payload: {
+                    term: 1,
+                    voteGranted: true
+                }
+            }
         });
         await transportA.send("B", validMessage);
         expect(handlerCalled).toBe(true);
@@ -112,6 +121,15 @@ describe("Transport.ts, MockTransport", () => {
             expect(from).toBe("A");
             expect(message).toEqual(validMessage);
             handlerCalled = true;
+
+            return {
+                type: 'RequestVote',
+                direction: 'response',
+                payload: {
+                    term: 1,
+                    voteGranted: true
+                }
+            }
         });
         await transportA.send("B", validMessage);
         expect(handlerCalled).toBe(true);
