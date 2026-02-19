@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { StateMachine, RaftState } from './StateMachine';
 import { RaftError } from '../util/Error';
-import { stat } from 'node:fs';
-import { a, b } from 'vitest/dist/chunks/suite.d.BJWk38HB';
-import { log } from 'node:console';
 
 describe('StateMachine.ts, StateMachine', () => {
 
@@ -508,5 +505,296 @@ describe('StateMachine.ts, StateMachine', () => {
             leaderCommit: 1
         });
         expect(onCommitIndexAdvanced).toHaveBeenCalledWith(1);
+    });
+
+    it('should trigger election timeout and become candidate when election timer expires', async () => {
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            callback();
+        });
+        await stateMachine.becomeFollower(1, null);
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+    });
+
+    it('should trigger election timeout and become candidate when election timer expires', async () => {
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            callback();
+        });
+        await stateMachine.becomeCandidate();
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+    });
+
+    it('should send heartbeats when heartbeat timer fires during becomeing leader', async () => {
+        timerManager.startHeartbeatTimer.mockImplementationOnce((callback: () => void) => {
+            callback();
+        });
+
+        await stateMachine.becomeLeader();
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length * 2);
+        });
+    });
+
+    it('should grant vote when candidate log term is higher than local log term', async () => {
+        logManager.getLastTerm.mockReturnValue(1);
+        logManager.getLastIndex.mockReturnValue(5);
+
+        const response = await stateMachine.handleRequestVote('node2', {
+            term: 1,
+            candidateId: 'node2',
+            lastLogIndex: 1,
+            lastLogTerm: 2,
+        });
+        expect(response.voteGranted).toBe(true);
+    });
+
+    it('should return early from election timeout handler if not follower or candidate', async () => {
+        let captureCallback: (() => void) | null = null;
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            captureCallback = callback;
+        });
+
+        await stateMachine.start();
+        await stateMachine.becomeLeader();
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Leader);
+        expect(persistentState.updateTermAndVote).not.toHaveBeenCalled();
+    });
+
+    it('should trigger election timeout callback registered in becomeFollowerUnlocked', async () => {
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        let captureCallback: (() => void) | null = null;
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            captureCallback = callback;
+        });
+
+        await stateMachine.handleRequestVote('node2', {
+            term: 5,
+            candidateId: 'node2',
+            lastLogIndex: 0,
+            lastLogTerm: 0,
+        });
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+    });
+
+    it('"should trigger election timeout callback registered in becomeCandidateUnlocked', async () => {
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        let callCounter = 0;
+        let captureCallback: (() => void) | null = null;
+        timerManager.startElectionTimer.mockImplementation((callback: () => void) => {
+            callCounter++;
+            if (callCounter ===  1) {
+                callback();
+            } else {
+                captureCallback = callback;
+            }
+        });
+        await stateMachine.becomeFollower(1, null);
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+    });
+
+    it('should trigger hearbeat callback registered in becomeLeaderUnlocked', async () => {
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: true });
+        let captureCallback: (() => void) | null = null;
+        timerManager.startHeartbeatTimer.mockImplementationOnce((callback: () => void) => {
+            captureCallback = callback;
+        });
+        await stateMachine.becomeCandidate();
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Leader);
+        });
+        rpcHandler.sendAppendEntries.mockClear();
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+    });
+
+    it('should log error with String() when sendRequestVote RPC fails', async () => {
+        rpcHandler.sendRequestVote.mockRejectedValue('plain string error');
+        await stateMachine.becomeCandidate();
+        await vi.waitFor(() => {
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('plain string error'));
+        });
+    });
+
+    it('should log error with String() when sendAppendEntries RPC fails', async () => {
+        rpcHandler.sendAppendEntries.mockRejectedValue('plain string error');
+        await stateMachine.becomeLeader();
+        await vi.waitFor(() => {
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('plain string error'));
+        });
+    });
+
+    it('should return ealr from sendHeartbeatsUnlocked when node is not a leader', async () => {
+        let captureCallback: (() => void) | null = null;
+        timerManager.startHeartbeatTimer.mockImplementation((callback: () => void) => {
+            captureCallback = callback;
+        });
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        rpcHandler.sendAppendEntries.mockClear();
+
+        (stateMachine as any)['currentState'] = RaftState.Follower;
+
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+        expect(rpcHandler.sendAppendEntries).not.toHaveBeenCalled();
+    });
+
+    it('should throw raftError from sendheartbeatsUnlocked when leaderId is null', async () => {
+        let captureCallback: (() => void) | null = null;
+        timerManager.startHeartbeatTimer.mockImplementation((callback: () => void) => {
+            captureCallback = callback;
+        });
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        (stateMachine as any)['leaderState'] = null;
+
+        expect(captureCallback).not.toBeNull();
+        await expect(captureCallback!()).rejects.toThrow(RaftError);
+    });
+
+    it('should log debug and return early from sendappendEntries when leaderId is null', async () => {
+        await stateMachine.becomeLeader();
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        rpcHandler.sendAppendEntries.mockClear();
+
+        (stateMachine as any)['leaderState'] = null;
+
+        await (stateMachine as any)['sendAppendEntries']('node2');
+        expect(logger.debug).toHaveBeenCalled();
+        expect(rpcHandler.sendAppendEntries).toHaveBeenCalledWith('node2', undefined);
+    });
+
+    it('should return early when AppendEntriesResponse term does not match current term', async () => {
+        await stateMachine.becomeLeader();
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        rpcHandler.sendAppendEntries.mockResolvedValue({ term: 0, success: true, matchIndex: 1 });
+
+        await (stateMachine as any)['sendAppendEntries']('node2');
+        expect(logger.info).toHaveBeenCalled();
+    });
+
+    it('should return early when AppendEntriesResponse received but node is no longer leader', async () => {
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        rpcHandler.sendAppendEntries.mockResolvedValue({ term: 1, success: true, matchIndex: 1 });
+        (stateMachine as any)['currentState'] = RaftState.Follower;
+
+        await (stateMachine as any)['sendAppendEntries']('node2');
+        expect(logger.info).toHaveBeenCalled();
+    });
+
+    it('should throw raftError in tryAdvanceCommitIndex when leaderState is null', async () => {
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        (stateMachine as any)['leaderState'] = null;
+
+        await expect((stateMachine as any)['tryAdvanceCommitIndex']()).rejects.toThrow(RaftError);
+    });
+
+    it('should advance commit index and call onCommitIndexAdvanced when newCommitIndex is higher', async () => {
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        const leaderState = (stateMachine as any)['leaderState'];
+
+        vi.spyOn(leaderState, 'calculateCommitIndex').mockResolvedValue(3);
+
+        volatileState.getCommitIndex.mockReturnValue(0);
+
+        await (stateMachine as any)['tryAdvanceCommitIndex']();
+        expect(volatileState.setCommitIndex).toHaveBeenCalledWith(3);
+        expect(onCommitIndexAdvanced).toHaveBeenCalledWith(3);
+    });
+
+    it('should call becomeFollowerUnlocked when appendEntries term equals current term', async () => {
+        persistentState.getCurrentTerm.mockReturnValue(1);
+
+        const response = await stateMachine.handleAppendEntries('node2', {
+            term: 1,
+            leaderId: 'node2',
+            prevLogIndex: 0,
+            prevLogTerm: 0,
+            entries: [],
+            leaderCommit: 0,
+        });
+        expect(response.success).toBe(true);
+        expect(stateMachine.getCurrentLeader()).toBe('node2');
+        expect(persistentState.updateTermAndVote).not.toHaveBeenCalled();
+    });
+
+    it('should not become leader when vote is granted but majority is not achieved', async () => {
+        const largePeers = ['node2', 'node3', 'node4'];
+        const largeMachine = new StateMachine(
+            nodeId,
+            largePeers,
+            config as any,
+            persistentState as any,
+            volatileState as any,
+            logManager as any,
+            rpcHandler as any,
+            timerManager as any,
+            logger as any,
+            onCommitIndexAdvanced as any
+        );
+
+        rpcHandler.sendRequestVote
+            .mockResolvedValueOnce({ term: 1, voteGranted: true })
+            .mockResolvedValueOnce({ term: 1, voteGranted: false })
+            .mockResolvedValueOnce({ term: 1, voteGranted: false });
+
+        await largeMachine.becomeCandidate();
+
+        await vi.waitFor(() => {
+            expect(largeMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+
+        expect(largeMachine.getCurrentState()).not.toBe(RaftState.Leader);
+        expect(logger.info).toHaveBeenCalled();
     });
 });

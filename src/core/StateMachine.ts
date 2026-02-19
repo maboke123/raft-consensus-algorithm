@@ -242,10 +242,8 @@ export class StateMachine implements StateMachineInterface {
                 };
             }
 
-            if (request.term >= currentTerm) {
-                this.logger.info(`Node ${this.nodeId} received AppendEntries from ${from} with higher term ${request.term}, updating term and becoming Follower`);
-                await this.becomeFollowerUnlocked(request.term, request.leaderId);
-            }
+            this.logger.info(`Node ${this.nodeId} received AppendEntries from ${from} with higher term ${request.term}, updating term and becoming Follower`);
+            await this.becomeFollowerUnlocked(request.term, request.leaderId);
 
             if(!(await this.logManager.matchesPrevLog(request.prevLogIndex, request.prevLogTerm))) {
                 this.logger.info(`Node ${this.nodeId} log does not match prevLogIndex ${request.prevLogIndex} and prevLogTerm ${request.prevLogTerm} from ${from}`);
