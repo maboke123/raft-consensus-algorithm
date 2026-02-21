@@ -8,8 +8,6 @@ import { MockClock } from '../timing/Clock';
 import { SeededRandom } from '../util/Random';
 import { ConsoleLogger } from '../util/Logger';
 import { LeaderState } from '../state/LeaderState';
-import { log } from 'node:console';
-import { a } from 'vitest/dist/chunks/suite.d.BJWk38HB';
 
 describe('RaftNode.ts, RaftNode', () => {
     const nodeId = 'node1';
@@ -32,6 +30,13 @@ describe('RaftNode.ts, RaftNode', () => {
     let node: RaftNode;
     let config: ReturnType<typeof createConfig>;
 
+    let logger: {
+        info: ReturnType<typeof vi.fn>;
+        debug: ReturnType<typeof vi.fn>;
+        warn: ReturnType<typeof vi.fn>;
+        error: ReturnType<typeof vi.fn>;
+    };
+
     const forceLeader = (n: RaftNode, term = 1) => {
         const stateMachine = (n as any)['stateMachine'];
         stateMachine['currentState'] = RaftState.Leader;
@@ -50,6 +55,13 @@ describe('RaftNode.ts, RaftNode', () => {
     };
 
     const command = { type: 'set', payload: { key: 'x', value: 10 }};
+
+    const silentLogger = {
+        info: () => {},
+        debug: () => {},
+        warn: () => {},
+        error: () => {}
+    };
 
     beforeEach(async () => {
         storage = new InMemoryStorage();
@@ -73,7 +85,7 @@ describe('RaftNode.ts, RaftNode', () => {
 
         config = createConfig(nodeId, peers, 150, 300, 50);
 
-        node = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random);
+        node = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random, silentLogger);
     });
 
     afterEach(async () => {
@@ -120,7 +132,7 @@ describe('RaftNode.ts, RaftNode', () => {
     });
 
     it('should open storage if not already open on start', async () => {
-        const raftNode = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random);
+        const raftNode = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random, silentLogger);
 
         const openSpy = vi.spyOn(storage, 'open').mockResolvedValue(undefined);
         vi.spyOn(storage, 'isOpen').mockReturnValueOnce(false);
@@ -172,7 +184,7 @@ describe('RaftNode.ts, RaftNode', () => {
 
         await storage.open();
 
-        const newNode = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random);
+        const newNode = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random, silentLogger);
         await newNode.start();
         expect(newNode.getCurrentTerm()).toBe(5);
         await newNode.stop();
@@ -186,7 +198,7 @@ describe('RaftNode.ts, RaftNode', () => {
 
         await storage.open();
 
-        const newNode = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random);
+        const newNode = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random, silentLogger);
         await newNode.start();
         expect(newNode.getLastLogIndex()).toBe(1);
         await newNode.stop();
