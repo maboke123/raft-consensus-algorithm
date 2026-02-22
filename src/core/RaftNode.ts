@@ -14,6 +14,8 @@ import { Storage } from "../storage/Storage";
 import { Transport } from "../transport/Transport";
 import { RaftError } from "../util/Error";
 import { AsyncLock } from "../lock/AsyncLock";
+import { RaftEventBus } from "../events/RaftEvents";
+import { NoOpEventBus } from "../events/EventBus";
 
 export interface CommandResult {
     success: boolean;
@@ -68,7 +70,8 @@ export class RaftNode implements RaftNodeInterface {
         private applicationStateMachine: ApplicationStateMachine,
         private clock: Clock,
         private random: Random,
-        logger?: Logger
+        logger?: Logger,
+        private bus: RaftEventBus = new NoOpEventBus()
     ) {
 
         validateConfig(config);
@@ -79,7 +82,8 @@ export class RaftNode implements RaftNodeInterface {
             config.nodeId,
             transport,
             this.logger,
-            this.clock
+            this.clock,
+            this.bus
         );
 
         const timerConfig = {
@@ -99,7 +103,7 @@ export class RaftNode implements RaftNodeInterface {
 
         this.volatileState = new VolatileState();
 
-        this.logManager = new LogManager(storage);
+        this.logManager = new LogManager(storage, this.bus, config.nodeId);
 
         this.stateMachine = new StateMachine(
             config.nodeId,
@@ -111,7 +115,8 @@ export class RaftNode implements RaftNodeInterface {
             this.rpcHandler,
             this.timerManager,
             this.logger,
-            (newCommitIndex) => this.notifyCommitWaiters(newCommitIndex)
+            (newCommitIndex) => this.notifyCommitWaiters(newCommitIndex),
+            this.bus
         );
     }
 
