@@ -256,28 +256,8 @@ export class StateMachine implements StateMachineInterface {
 
             if (request.entries.length > 0) {
 
-                const existingTerm = await this.logManager.getTermAtIndex(request.prevLogIndex + 1);
-                const hasConflict = existingTerm !== undefined && existingTerm !== request.entries[0].term;
-
                 await this.logManager.appendEntriesFrom(request.prevLogIndex, request.entries);
                 this.logger.info(`Node ${this.nodeId} appended ${request.entries.length} entries from ${from}`);
-
-                if (hasConflict) {
-                    this.eventBus.emit({
-                        ...baseEvent(this.nodeId),
-                        type: "LogConflictResolved",
-                        truncatedFromIndex: request.prevLogIndex + 1,
-                        newEntries: request.entries,
-                        term: this.persistentState.getCurrentTerm()
-                    });
-                } else {
-                    this.eventBus.emit({
-                        ...baseEvent(this.nodeId),
-                        type: "LogAppended",
-                        entries: request.entries,
-                        term: this.persistentState.getCurrentTerm()
-                    });
-                }
             }
 
             const leaderCommit = request.leaderCommit;

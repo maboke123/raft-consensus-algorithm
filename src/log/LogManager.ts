@@ -1,6 +1,9 @@
 import { LogEntry, validateLogEntry, Command } from './LogEntry';
 import { StorageError, LogInconsistencyError } from '../util/Error';
 import { Storage, StorageOperation, StorageCodec } from '../storage/Storage';
+import { RaftEventBus } from '../events/RaftEvents';
+import { NoOpEventBus } from '../events/EventBus';
+import { NodeId } from '../core/Config';
 
 export interface LogManagerInterface {
     initialize(): Promise<void>;
@@ -28,7 +31,12 @@ export class LogManager implements LogManagerInterface {
     private lastTerm: number = 0;
     private initialized: boolean = false;
 
-    constructor(private readonly storage: Storage,) {
+    constructor(
+        private readonly storage: Storage,
+        private readonly eventBus: RaftEventBus = new NoOpEventBus(),
+        private readonly nodeId: NodeId | null = null
+
+    ) {
         if (!storage.isOpen()) {
             throw new StorageError('Storage must be open before creating LogManager');
         }
@@ -101,6 +109,8 @@ export class LogManager implements LogManagerInterface {
             }
         }
 
+        const lastEntry = entries[entries.length - 1];
+
         await this.safeStorage(async () => {
             const operation: StorageOperation[] = [];
 
@@ -113,8 +123,6 @@ export class LogManager implements LogManagerInterface {
                     value: StorageCodec.encodeJSON(entry)
                 });
             }
-
-            const lastEntry = entries[entries.length - 1];
 
             operation.push({
                 type: 'set',
@@ -132,6 +140,19 @@ export class LogManager implements LogManagerInterface {
             this.lastIndex = lastEntry.index;
             this.lastTerm = lastEntry.term;
         }, `appendEntries (${entries.length} entries)`);
+
+        
+        if (this.nodeId) {
+            this.eventBus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.nodeId,
+                type: 'LogAppended',
+                entries: entries,
+                term: lastEntry.term,
+            });
+        }
 
         return this.lastIndex;
     }
@@ -350,6 +371,20 @@ export class LogManager implements LogManagerInterface {
         }
 
         if (truncateFromIndex !== null) {
+
+            if (this.nodeId) {
+                this.eventBus.emit({
+                    eventId: crypto.randomUUID(),
+                    timestamp: performance.now(),
+                    wallTime: Date.now(),
+                    nodeId: this.nodeId,
+                    type: 'LogConflictResolved',
+                    newEntries: entries,
+                    truncatedFromIndex: truncateFromIndex,
+                    term: entries[0].term,
+                });
+            }
+
             await this.deleteEntriesFrom(truncateFromIndex);
         }
 
