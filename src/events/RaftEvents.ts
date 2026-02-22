@@ -8,7 +8,7 @@ import {
 } from "../rpc/RPCTypes";
 import { RaftState } from "../core/StateMachine";
 
-interface BaseEvent {
+export interface BaseEvent {
     eventId: string;
     timestamp: number;
     wallTime: number;
