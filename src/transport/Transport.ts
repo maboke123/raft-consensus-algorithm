@@ -90,6 +90,12 @@ export class MockTransport implements Transport {
         this.dropRate = dropRate;
     }
 
+    static setDropRate(nodeId: NodeId, dropRate: number): void {
+        const transport = MockTransport.transports.get(nodeId);
+        if (!transport) { return; }
+        transport.setDropRate(dropRate);
+    }
+
     getDropRate(): number {
         return this.dropRate;
     }
