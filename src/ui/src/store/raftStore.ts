@@ -54,8 +54,6 @@ export const useRaftStore = create<RaftStore>((set) => ({
                 break;
             }
             case "MessageSent": {
-                if (event.messageType !== "RequestVote") break;
-
                 const arrow: MessageArrow = {
                     id: event.messageId,
                     fromNodeId: event.fromNodeId,
@@ -69,41 +67,42 @@ export const useRaftStore = create<RaftStore>((set) => ({
             }
 
             case "MessageReceived": {
-
-                if (event.messageType !== "RequestVoteResponse") break;
-
-                let returnArrow: MessageArrow;
-
-                setTimeout(() => {
-                    returnArrow = {
-                        id: event.messageId + "-response",
+                if (event.messageType === "AppendEntriesResponse") {
+                    const returnId = event.messageId + "-response";
+                    set(s => ({ arrows: s.arrows.filter(a => a.id !== event.messageId) }));
+                    set(s => ({ arrows: [...s.arrows, {
+                        id: returnId,
                         fromNodeId: event.fromNodeId,
                         toNodeId: event.toNodeId,
                         messageType: event.messageType,
-                        status: "inFlight",
+                        status: "inFlight" as const,
                         createdAt: Date.now(),
-                    };
-                    set(state => ({ arrows: [...state.arrows, returnArrow] }));
-                }, 1500);
+                    }]}));
+                    setTimeout(() => {
+                        set(s => ({ arrows: s.arrows.filter(a => a.id !== returnId) }));
+                    }, 300);
+                } else if (event.messageType === "RequestVoteResponse") {
 
-
-                setTimeout(() => {
-                    set(state => ({
-                        arrows: state.arrows.filter(arrow => arrow.id !== event.messageId),
-                    }));
-                }, 1000);
-
-                setTimeout(() => {
-                    set(state => ({
-                        arrows: state.arrows.filter(arrow => arrow.id !== returnArrow.id),
-                    }));
-                }, 2500);
-
+                    const returnId = event.messageId + "-response";
+                    setTimeout(() => {
+                        set(s => ({ arrows: s.arrows.filter(a => a.id !== event.messageId) }));
+                    }, 1000);
+                    setTimeout(() => {
+                        set(s => ({ arrows: [...s.arrows, {
+                            id: returnId,
+                            fromNodeId: event.fromNodeId,
+                            toNodeId: event.toNodeId,
+                            messageType: event.messageType,
+                            status: "inFlight" as const,
+                            createdAt: Date.now(),
+                        }]}));
+                    }, 1500);
+                    setTimeout(() => {
+                        set(s => ({ arrows: s.arrows.filter(a => a.id !== returnId) }));
+                    }, 2500);
+                }
                 break;
             }
-
-            default:
-                break;
         }
     },
     reset: () => set({ nodeIds: [], events: [], nodes: {}, arrows: [] }),

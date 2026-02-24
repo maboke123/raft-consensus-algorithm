@@ -10,7 +10,7 @@ async function main() {
     const bus = new LocalEventBus();
     const eventStore = new EventStore(bus, { maxEvents: 10000 });
 
-    const timerConfig = { electionTimeoutMin: 150, electionTimeoutMax: 300, heartbeatInterval: 50 };
+    const timerConfig = { electionTimeoutMin: 1500, electionTimeoutMax: 3000, heartbeatInterval: 500 };
     const cluster = new ClusterRunner(bus, {nodeCount, timerConfig});
 
     await cluster.start();
