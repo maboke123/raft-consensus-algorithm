@@ -42,7 +42,6 @@ export function useRaftSocket() {
             };
 
             ws.onclose = () => {
-                setStoreWebSocket(null);
                 if (!canceled) {
                     reconnectTimer = setTimeout(connect, reconnnect_ms);
                 }
@@ -57,6 +56,7 @@ export function useRaftSocket() {
             canceled = true;
             clearTimeout(reconnectTimer);
             ws?.close();
+            setStoreWebSocket(null);
         };
     }, []);
 }
