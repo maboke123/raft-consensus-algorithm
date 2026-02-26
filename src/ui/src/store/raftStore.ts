@@ -10,6 +10,9 @@ interface RaftStore {
     dropRateByNode: Record<string, number>;
     cutLinks: Set<string>;
     connected: boolean;
+    totalEventCount: number;
+    messageVisibility: Record<string, boolean>;
+    toggleMessageVisibility: (messageType: string) => void;
     setNodeIds: (ids: string[]) => void;
     pushEvent: (event: RaftEvent) => void;
     processEvent: (event: RaftEvent) => void;
@@ -46,6 +49,13 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
     dropRateByNode: {},
     cutLinks: new Set(),
     connected: false,
+    totalEventCount: 0,
+    messageVisibility: {
+        RequestVote: true,
+        AppendEntries: true,
+        Heartbeat: true,
+        Dropped: true,
+    },
     setNodeIds: (ids) => { 
         const nodes: Record<string, NodeUIState> = {};
         for (const id of ids) {
@@ -55,7 +65,8 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
     },
     pushEvent: (event) => set(
         (state) => ({ events: [event, ...state.events]
-            .slice(0, 100) })),
+            .slice(0, 100), totalEventCount: state.totalEventCount + 1 })
+        ),
     processEvent: (event) => {
         switch (event.type) {
             case "NodeStateChanged": {
@@ -259,7 +270,13 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
         get().sendCommand({ type: "HealAllLinks" });
     },
     setConnected: (connected) => set({ connected }),
-    reset: () => set({ nodeIds: [], events: [], nodes: {}, arrows: [], selectedNodeId: null, dropRateByNode: {}, cutLinks: new Set() }),
+    toggleMessageVisibility: (messageType) => set(state => ({
+        messageVisibility: {
+            ...state.messageVisibility,
+            [messageType]: !state.messageVisibility[messageType],
+        },
+    })),
+    reset: () => set({ nodeIds: [], events: [], nodes: {}, arrows: [], selectedNodeId: null, dropRateByNode: {}, cutLinks: new Set(), totalEventCount: 0, messageVisibility: { RequestVote: true, AppendEntries: true, Heartbeat: true, Dropped: true } }),
     })
 )
 

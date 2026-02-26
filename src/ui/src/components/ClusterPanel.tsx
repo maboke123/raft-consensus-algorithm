@@ -20,6 +20,9 @@ export function ClusterPanel() {
     const detailWidth = selectedNodeId ? 330 : 0;
     const rightOffset = detailWidth + 12;
 
+    const messageVisibility = useRaftStore(s => s.messageVisibility);
+    const toggleMessageVisibility = useRaftStore(s => s.toggleMessageVisibility);
+
     return (
         <>
             <button
@@ -81,10 +84,32 @@ export function ClusterPanel() {
                     </Section>
 
                     <Section title="MESSAGES">
-                        <LegendArrow color={messageColors.RequestVote}   label="RequestVote" dashed={false} />
-                        <LegendArrow color={messageColors.AppendEntries} label="AppendEntries" dashed={false} />
-                        <LegendArrow color={messageColors.Heartbeat}     label="Heartbeat" dashed={true} />
-                        <LegendArrow color={messageColors.Dropped}       label="Dropped" dashed={true} />
+                        {([
+                            { key: 'RequestVote',   label: 'RequestVote',   color: messageColors.RequestVote,   dashed: false },
+                            { key: 'AppendEntries', label: 'AppendEntries', color: messageColors.AppendEntries, dashed: false },
+                            { key: 'Heartbeat',     label: 'Heartbeat',     color: messageColors.Heartbeat,     dashed: true  },
+                            { key: 'Dropped',       label: 'Dropped',       color: messageColors.Dropped,       dashed: true  },
+                        ] as const).map(({ key, label, color, dashed }) => (
+                            <div
+                                key={key}
+                                onClick={() => toggleMessageVisibility(key)}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                    cursor: 'pointer',
+                                    opacity: messageVisibility[key] ? 1 : 0.3,
+                                    userSelect: 'none',
+                                }}
+                            >
+                                <svg width={28} height={10} style={{ flexShrink: 0 }}>
+                                    <line x1={0} y1={5} x2={22} y2={5} stroke={color} strokeWidth={dashed ? 1 : 2} strokeDasharray={dashed ? '3 2' : undefined} />
+                                    <polygon points="20,2 28,5 20,8" fill={color} />
+                                </svg>
+                                <span style={{ color: '#8b949e' }}>{label}</span>
+                                <span style={{ marginLeft: 'auto', fontSize: 10, color: messageVisibility[key] ? '#2ea043' : '#30363d' }}>
+                                    {messageVisibility[key] ? 'on' : 'off'}
+                                </span>
+                            </div>
+                        ))}
                     </Section>
                 </div>
             )}
@@ -114,18 +139,6 @@ function LegendDot({ color, label }: { color: string; label: string }) {
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 10, height: 10, borderRadius: '50%', border: `2px solid ${color}`, background: '#161b22', flexShrink: 0 }} />
-            <span style={{ color: '#8b949e' }}>{label}</span>
-        </div>
-    );
-}
-
-function LegendArrow({ color, label, dashed }: { color: string; label: string; dashed: boolean }) {
-    return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <svg width={28} height={10} style={{ flexShrink: 0 }}>
-                <line x1={0} y1={5} x2={22} y2={5} stroke={color} strokeWidth={dashed ? 1 : 2} strokeDasharray={dashed ? '3 2' : undefined} />
-                <polygon points="20,2 28,5 20,8" fill={color} />
-            </svg>
             <span style={{ color: '#8b949e' }}>{label}</span>
         </div>
     );

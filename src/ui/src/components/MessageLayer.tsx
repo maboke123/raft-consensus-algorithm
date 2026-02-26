@@ -11,6 +11,7 @@ interface Props {
 
 export function MessageLayer({ positions, nodeRadius, width, height }: Props) {
     const arrows = useRaftStore(s => s.arrows);
+    const messageVisibility = useRaftStore(s => s.messageVisibility);
 
     return (
         <svg style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}
@@ -46,6 +47,13 @@ export function MessageLayer({ positions, nodeRadius, width, height }: Props) {
                 const y2 = to.y   - uy * (nodeRadius + 12);
 
                 const isRV = arrow.messageType === "RequestVote" || arrow.messageType === "RequestVoteResponse";
+                const isDropped = arrow.status === 'dropped';
+
+                if (isDropped && !messageVisibility.Dropped) return null;
+                if (isRV && !messageVisibility.RequestVote) return null;
+                if (!isRV && arrow.isHeartbeat && !messageVisibility.Heartbeat) return null;
+                if (!isRV && !arrow.isHeartbeat && !isDropped && !messageVisibility.AppendEntries) return null;
+
                 const strokeColor = isRV ? messageColors.RequestVote 
                         : arrow.isHeartbeat ? messageColors.Heartbeat
                         : messageColors.AppendEntries;

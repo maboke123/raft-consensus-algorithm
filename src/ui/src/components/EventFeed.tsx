@@ -4,6 +4,7 @@ import type { RaftEvent } from "../types/raftTypes";
 
 export function EventFeed() {
     const events = useRaftStore((state) => state.events);
+    const totalEventCount = useRaftStore((state) => state.totalEventCount);
     const [open, setOpen] = useState(false);
 
     return (
@@ -46,7 +47,7 @@ export function EventFeed() {
                     color: '#e6edf3',
                 }}>
                     <div style={{ marginBottom: 8, color: '#8b949e' }}>
-                        {events.length} events
+                        { totalEventCount } events -  showing last { events.length }
                     </div>
                     {events.map((event: RaftEvent) => (
                         <EventRow key={event.eventId} event={event} />

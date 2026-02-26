@@ -5,7 +5,7 @@ import { WsServer } from "./WsServer";
 
 async function main() {
     const port = 4001;
-    const nodeCount = 5;
+    const nodeCount = 10;
 
     const bus = new LocalEventBus();
     const eventStore = new EventStore(bus, { maxEvents: 10000 });
