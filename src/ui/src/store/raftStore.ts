@@ -123,7 +123,7 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                     const returnId = event.messageId + "-response";
                     setTimeout(() => {
                         set(s => ({ arrows: s.arrows.filter(a => a.id !== event.messageId) }));
-                    }, 1000);
+                    }, 400);
                     setTimeout(() => {
                         set(s => ({ arrows: [...s.arrows, {
                             id: returnId,
@@ -134,10 +134,10 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                             createdAt: Date.now(),
                             isHeartbeat: false,
                         }]}));
-                    }, 1500);
+                    }, 500);
                     setTimeout(() => {
                         set(s => ({ arrows: s.arrows.filter(a => a.id !== returnId) }));
-                    }, 2500);
+                    }, 1000);
                 }
                 break;
             }
@@ -148,7 +148,7 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                 }));
                 setTimeout(() => {
                     set(s => ({ arrows: s.arrows.filter(a => a.id !== event.messageId) }));
-                }, 900);
+                }, 600);
                 break;
             }
 
@@ -314,6 +314,6 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
 setInterval(() => {
     const now = Date.now();
     useRaftStore.setState(s => ({
-        arrows: s.arrows.filter(a => now - a.createdAt < 3000 || a.status === "dropped"),
+        arrows: s.arrows.filter(a => now - a.createdAt < 1500 || a.status === "dropped"),
     }));
 }, 1000);
