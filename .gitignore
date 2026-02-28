@@ -10,7 +10,12 @@
 !*.css
 !*.svg
 !*.html
+!*.proto
+!*.json
+!*.md
 
-*node_modules/
+**/node_modules/
+**/dist/
+**/coverage/
 *src/test-scripts/
-*coverage/
+*notes.md
