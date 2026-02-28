@@ -1,17 +1,18 @@
 import { LocalEventBus } from "../events/EventBus";
 import { EventStore } from "../events/EventStore";
-import { ClusterRunner } from "./ClusterRunner";
+// import { ClusterRunner } from "./ClusterRunner";
+import { ClusterRunnerGRPC } from "./ClusterRunnerGRPC";
 import { WsServer } from "./WsServer";
 
 async function main() {
     const port = 4001;
-    const nodeCount = 10;
+    const nodeCount = 3;
 
     const bus = new LocalEventBus();
     const eventStore = new EventStore(bus, { maxEvents: 10000 });
 
-    const timerConfig = { electionTimeoutMin: 1500, electionTimeoutMax: 3000, heartbeatInterval: 500 };
-    const cluster = new ClusterRunner(bus, {nodeCount, timerConfig});
+    const timerConfig = { electionTimeoutMin: 500, electionTimeoutMax: 1000, heartbeatInterval: 150 };
+    const cluster = new ClusterRunnerGRPC(bus, {nodeCount, timerConfig});
 
     await cluster.start();
 
@@ -38,8 +39,8 @@ async function main() {
 
         setTimeout(async () => {
             await cluster.recoverNode(leader);
-        }, 5000);
-    }, 10000);
+        }, 2000);
+    }, 30000);
 
     process.on("SIGINT", async () => {
         console.log("Shutting down...");

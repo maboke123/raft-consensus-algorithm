@@ -1,15 +1,17 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { EventStore } from "../events/EventStore";
-import { ClusterRunner } from "./ClusterRunner";
+// import { ClusterRunner } from "./ClusterRunner";
 import { ClientMessage, ServerMessage } from "../events/RaftEvents";
+import { ClusterRunnerGRPC } from "./ClusterRunnerGRPC";
 
 export class WsServer {
     private wss: WebSocketServer | null = null;
 
     constructor(
         private eventStore: EventStore,
-        private cluster: ClusterRunner,
+        // private cluster: ClusterRunner,
+        private cluster: ClusterRunnerGRPC,
         private port: number = 4001
     ) {}
 
