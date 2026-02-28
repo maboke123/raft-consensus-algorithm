@@ -13,6 +13,7 @@
 !*.proto
 !*.json
 !*.md
+!*.js
 
 **/node_modules/
 **/dist/
