@@ -6,6 +6,7 @@ import { NetworkError } from "../util/Error";
 import { Transport, MessageHandler } from "./Transport";
 import { StorageCodec } from "../storage/Storage";
 import { NodeId } from "../core/Config";
+import fs from "fs/promises";
 
 const protoPath = path.resolve(__dirname, "../../proto/raft.proto");
 
@@ -91,6 +92,11 @@ export class GrpcTransport implements Transport {
         private readonly nodeId: NodeId,
         private readonly port: number,
         private readonly peers: Record<NodeId, string>,
+        private readonly certPaths: {
+            caCert: string,
+            nodeCert: string;
+            nodeKey: string;
+        },
         callTimeoutMs: number = 5000,
         shutdownTimeoutMs: number = 5000
     ) {
@@ -106,10 +112,21 @@ export class GrpcTransport implements Transport {
         this.server = new grpc.Server();
         this.server.addService(proto.raft.RaftService.service, this.buildServiceImplementation());
 
+        const caCert = await fs.readFile(this.certPaths.caCert);
+        const nodeCert = await fs.readFile(this.certPaths.nodeCert);
+        const nodeKey = await fs.readFile(this.certPaths.nodeKey);
+
         return new Promise((resolve, reject) => {
             this.server!.bindAsync(
                 `0.0.0.0:${this.port}`,
-                grpc.ServerCredentials.createInsecure(), // TODO: Add TLS support
+                grpc.ServerCredentials.createSsl(
+                    caCert,
+                    [{
+                        cert_chain: nodeCert,
+                        private_key: nodeKey
+                    }],
+                    true
+                ),
                 (err) => {
                     if (err) {
                         reject(new NetworkError(`Failed to bind gRPC server: ${err.message}`));
@@ -118,7 +135,7 @@ export class GrpcTransport implements Transport {
                     for (const [peerId, address] of Object.entries(this.peers)) {
                         this.clients.set(
                             peerId,
-                            new proto.raft.RaftService(address, grpc.credentials.createInsecure(), { 'grpc.enable_retries': 0 })
+                            new proto.raft.RaftService(address, grpc.credentials.createSsl(caCert, nodeKey, nodeCert), { 'grpc.enable_retries': 0 })
                         );
                     }
 

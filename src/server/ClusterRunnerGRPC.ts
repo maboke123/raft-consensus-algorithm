@@ -53,7 +53,17 @@ export class ClusterRunnerGRPC {
                 Object.entries(addressMap).filter(([id]) => id !== nodeId)
             );
 
-            const transport = new GrpcTransport(nodeId, port, peers, 400, 3000);
+            const transport = new GrpcTransport(
+                nodeId,
+                port, 
+                peers, 
+                {
+                    caCert: path.join(__dirname, "../../certs/ca/ca.crt"),
+                    nodeCert: path.join(__dirname, `../../certs/${nodeId}`, `${nodeId}.crt`),
+                    nodeKey: path.join(__dirname, `../../certs/${nodeId}`, `${nodeId}.key`)
+                },
+                400, 
+                3000);
 
             const clock = new SystemClock();
 
