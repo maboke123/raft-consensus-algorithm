@@ -16,7 +16,6 @@ import { RaftError } from "../util/Error";
 import { AsyncLock } from "../lock/AsyncLock";
 import { RaftEventBus } from "../events/RaftEvents";
 import { NoOpEventBus } from "../events/EventBus";
-import { timeStamp } from "node:console";
 
 export interface CommandResult {
     success: boolean;

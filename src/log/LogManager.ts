@@ -24,11 +24,15 @@ export interface LogManagerInterface {
 const LOG_ENTRY_PREFIX = "raft:log:";
 const LAST_INDEX_KEY = "raft:log:lastIndex";
 const LAST_TERM_KEY = "raft:log:lastTerm";
+const SNAPSHOT_INDEX_KEY = "raft:log:snapshot:index";
+const SNAPSHOT_TERM_KEY = "raft:log:snapshot:term";
 
 export class LogManager implements LogManagerInterface {
 
     private lastIndex: number = 0;
     private lastTerm: number = 0;
+    private snapshotIndex: number = 0;
+    private snapshotTerm: number = 0;
     private initialized: boolean = false;
 
     constructor(
@@ -53,6 +57,11 @@ export class LogManager implements LogManagerInterface {
             const lastTermBuf = await this.storage.get(LAST_TERM_KEY);
             this.lastIndex = lastIndexBuf ? StorageCodec.decodeNumber(lastIndexBuf) : 0;
             this.lastTerm = lastTermBuf ? StorageCodec.decodeNumber(lastTermBuf) : 0;
+
+            const snapshotIndexBuf = await this.storage.get(SNAPSHOT_INDEX_KEY);
+            const snapshotTermBuf = await this.storage.get(SNAPSHOT_TERM_KEY);
+            this.snapshotIndex = snapshotIndexBuf ? StorageCodec.decodeNumber(snapshotIndexBuf) : 0;
+            this.snapshotTerm = snapshotTermBuf ? StorageCodec.decodeNumber(snapshotTermBuf) : 0;
 
             this.initialized = true;
         }, 'initialize');
@@ -173,7 +182,7 @@ export class LogManager implements LogManagerInterface {
     async getEntry(index: number): Promise<LogEntry | null> {
         this.ensureInitialized();
 
-        if (index < 1 || index > this.lastIndex) {
+        if (index <= this.snapshotIndex || index > this.lastIndex) {
             return null;
         }
 
@@ -187,7 +196,7 @@ export class LogManager implements LogManagerInterface {
     async getEntries(fromIndex: number, toIndex: number): Promise<LogEntry[]> {
         this.ensureInitialized();
 
-        if (fromIndex < 1 || toIndex > this.lastIndex || fromIndex > toIndex) {
+        if (fromIndex <= this.snapshotIndex || toIndex > this.lastIndex || fromIndex > toIndex) {
             throw new LogInconsistencyError(`Invalid index range: from ${fromIndex} to ${toIndex}`);
         }
 
@@ -206,14 +215,18 @@ export class LogManager implements LogManagerInterface {
 
     getFirstIndex(): number {
         this.ensureInitialized();
-        if (this.lastIndex === 0) {
+        if (this.lastIndex === 0 && this.snapshotIndex === 0) {
             throw new LogInconsistencyError('No log entries found');
         }
-        return 1;
+        return this.snapshotIndex + 1;
     }
 
     async getTermAtIndex(index: number): Promise<number | null> {
         this.ensureInitialized();
+
+        if (index === this.snapshotIndex) {
+            return this.snapshotTerm;
+        }
 
         const entry = await this.getEntry(index);
         return entry ? entry.term : null;
@@ -226,6 +239,14 @@ export class LogManager implements LogManagerInterface {
             return true;
         }
 
+        if (index === this.snapshotIndex) {
+            return this.snapshotTerm === term;
+        }
+
+        if (index < this.snapshotIndex) {
+            return false;
+        }
+
         const entry = await this.getEntry(index);
         return entry !== null && entry.term === term;
     }
@@ -235,6 +256,10 @@ export class LogManager implements LogManagerInterface {
 
         if (this.lastIndex === 0) {
             return null;
+        }
+
+        if (this.lastIndex === this.snapshotIndex) {
+            return null
         }
 
         return await this.getEntry(this.lastIndex);
@@ -253,8 +278,8 @@ export class LogManager implements LogManagerInterface {
     async deleteEntriesFrom(index: number): Promise<void> {
         this.ensureInitialized();
 
-        if (index < 1) {
-            throw new LogInconsistencyError(`Cannot delete from index ${index} as it is less than 1`);
+        if (index <= this.snapshotIndex) {
+            throw new LogInconsistencyError(`Cannot delete from index ${index} as it is less than or equal to snapshot index ${this.snapshotIndex}`);
         }
 
         if (index > this.lastIndex) {
@@ -273,7 +298,7 @@ export class LogManager implements LogManagerInterface {
 
             const newLastIndex = index - 1;
 
-            if (newLastIndex === 0) {
+            if (newLastIndex <= this.snapshotIndex) {
                 operation.push({
                     type: 'delete',
                     key: LAST_INDEX_KEY
@@ -284,7 +309,7 @@ export class LogManager implements LogManagerInterface {
                     key: LAST_TERM_KEY
                 });
 
-                this.lastTerm = 0;
+                this.lastTerm = this.snapshotTerm;
 
             } else {
                 const prevEntry = await this.getEntry(newLastIndex);
@@ -345,14 +370,14 @@ export class LogManager implements LogManagerInterface {
         }, 'clear');
         */
 
-        await this.deleteEntriesFrom(1);
+        await this.deleteEntriesFrom(this.snapshotIndex + 1);
     }
 
     async getEntriesFromIndex(index: number): Promise<LogEntry[]> {
         this.ensureInitialized();
 
-        if (index < 1) {
-            throw new LogInconsistencyError(`Invalid fromIndex: ${index} is less than 1`);
+        if (index <= this.snapshotIndex) {
+            throw new LogInconsistencyError(`Invalid fromIndex: ${index} is less than or equal to snapshot index ${this.snapshotIndex}`);
         }
 
         if (index > this.lastIndex) {
@@ -417,6 +442,10 @@ export class LogManager implements LogManagerInterface {
             return prevLogTerm === 0;
         }
 
+        if (prevLogIndex === this.snapshotIndex) {
+            return this.snapshotTerm === prevLogTerm;
+        }
+
         const entry = await this.getEntry(prevLogIndex);
 
         if (!entry) {
@@ -443,7 +472,7 @@ export class LogManager implements LogManagerInterface {
 
         let conflictIndex = prevLogIndex;
 
-        while (conflictIndex > 1) {
+        while (conflictIndex > this.snapshotIndex + 1) {
             const entry = await this.getEntry(conflictIndex - 1);
             if (!entry || entry.term !== conflictTerm) {
                 break;
