@@ -14,6 +14,7 @@ export function NodeLayer({ positions, nodeRadius, width, height }: Props) {
     const nodes = useRaftStore((state) => state.nodes);
     const selectNode = useRaftStore((state) => state.selectNode);
     const selectedNodeId = useRaftStore((state) => state.selectedNodeId);
+    const snapshottingNodes = useRaftStore((state) => state.snapshottingNodes);
 
     return (
         <svg width={width} height={height} style={{ display: 'block', position: 'relative', zIndex: 1, pointerEvents: 'none' }}>
@@ -26,6 +27,11 @@ export function NodeLayer({ positions, nodeRadius, width, height }: Props) {
                 return (
                     <g key={id} onClick={() => selectNode(selectedNodeId === id ? null : id)}
                         style={{ cursor: 'pointer', pointerEvents: 'all' }}>
+
+                        {snapshottingNodes.has(id) && (
+                            <circle cx={x} cy={y} r={nodeRadius + 10} fill="none" stroke={roleColors.TakingSnapshot} strokeWidth={3} />
+                        )}
+
                         <circle cx={x} cy={y} r={nodeRadius} fill="#161b22" stroke={color} strokeWidth={2} opacity={isCrashed ? 0.4 : 1} />
                         <text x={x} y={y - 10} textAnchor="middle" dominantBaseline="middle"
                             fill={isCrashed ? roleColors.Crashed : "#e6edf3"} fontSize={12} fontFamily="monospace">

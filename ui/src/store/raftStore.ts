@@ -12,6 +12,7 @@ interface RaftStore {
     connected: boolean;
     totalEventCount: number;
     messageVisibility: Record<string, boolean>;
+    snapshottingNodes: Set<string>;
     toggleMessageVisibility: (messageType: string) => void;
     setNodeIds: (ids: string[]) => void;
     pushEvent: (event: RaftEvent) => void;
@@ -38,6 +39,7 @@ const makeNode = (nodeId: string): NodeUIState => ({
     votedFor: null,
     crashed: false,
     logEntries: [],
+    snapshotIndex: 0,
 })
 
 export const useRaftStore = create<RaftStore>((set, get) => ({
@@ -55,7 +57,9 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
         AppendEntries: true,
         Heartbeat: true,
         Dropped: true,
+        InstallSnapshot: true,
     },
+    snapshottingNodes: new Set<string>(),
     setNodeIds: (ids) => { 
         const nodes: Record<string, NodeUIState> = {};
         for (const id of ids) {
@@ -118,6 +122,7 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                     setTimeout(() => {
                         set(s => ({ arrows: s.arrows.filter(a => a.id !== returnId) }));
                     }, 300);
+
                 } else if (event.messageType === "RequestVoteResponse") {
 
                     const returnId = event.messageId + "-response";
@@ -138,6 +143,11 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                     setTimeout(() => {
                         set(s => ({ arrows: s.arrows.filter(a => a.id !== returnId) }));
                     }, 1000);
+
+                } else if (event.messageType === "InstallSnapshotResponse") {
+                    setTimeout(() => {
+                        set(s => ({ arrows: s.arrows.filter(a => a.id !== event.messageId) }));
+                    }, 800);
                 }
                 break;
             }
@@ -272,6 +282,44 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                 break;
             }
 
+            case "SnapshotTaken": {
+                set(state => ({
+                    nodes: {
+                        ...state.nodes,
+                        [event.nodeId]: {
+                            ...state.nodes[event.nodeId],
+                            snapshotIndex: event.lastIncludedIndex,
+                            logEntries: state.nodes[event.nodeId]?.logEntries.filter(
+                                e => e.index > event.lastIncludedIndex) ?? [],
+                        },
+                    },
+                    snapshottingNodes: new Set([...state.snapshottingNodes, event.nodeId]),
+                }));
+                setTimeout(() => {
+                    set(state => {
+                        const next = new Set(state.snapshottingNodes);
+                        next.delete(event.nodeId);
+                        return { snapshottingNodes: next };
+                    });
+                }, 1000);
+                break;
+            }
+
+            case "SnapshotInstalled": {
+                set(state => ({
+                    nodes: {
+                        ...state.nodes,
+                        [event.nodeId]: {
+                            ...state.nodes[event.nodeId],
+                            snapshotIndex: event.lastIncludedIndex,
+                            commitIndex: event.lastIncludedIndex,
+                            logEntries: state.nodes[event.nodeId]?.logEntries.filter(
+                                e => e.index > event.lastIncludedIndex) ?? [],
+                        },
+                    },
+                }));
+                break;
+            }
         }
     },
     selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
@@ -307,7 +355,7 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
             [messageType]: !state.messageVisibility[messageType],
         },
     })),
-    reset: () => set({ nodeIds: [], events: [], nodes: {}, arrows: [], selectedNodeId: null, dropRateByNode: {}, cutLinks: new Set(), totalEventCount: 0, messageVisibility: { RequestVote: true, AppendEntries: true, Heartbeat: true, Dropped: true } }),
+    reset: () => set({ nodeIds: [], events: [], nodes: {}, arrows: [], selectedNodeId: null, dropRateByNode: {}, cutLinks: new Set(), totalEventCount: 0, messageVisibility: { RequestVote: true, AppendEntries: true, Heartbeat: true, Dropped: true, InstallSnapshot: true }, snapshottingNodes: new Set()}),
     })
 )
 

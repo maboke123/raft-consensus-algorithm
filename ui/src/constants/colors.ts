@@ -3,6 +3,7 @@ export const roleColors = {
     Follower : "#0366d6",
     Candidate : "#d73a49",
     Crashed : "#8b0000",
+    TakingSnapshot: "#f97316",
 };
 
 export const messageColors = {
@@ -11,6 +12,8 @@ export const messageColors = {
     AppendEntries: "#0366d6",
     Heartbeat: "#42e4e7",
     Dropped: "#ef4444",
+    InstallSnapshotRequest: "#f97316",
+    InstallSnapshotResponse: "#f97316",
 };
 
 const termColors = [

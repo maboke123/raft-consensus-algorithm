@@ -104,7 +104,7 @@ export interface NextIndexDecrementedEvent extends BaseEvent {
 
 export interface MessageSentEvent extends BaseEvent {
     type: "MessageSent";
-    messageType: "RequestVote" | "AppendEntries";
+    messageType: "RequestVote" | "AppendEntries" | "InstallSnapshotRequest";
     messageId: string;
     fromNodeId: string;
     toNodeId: string;
@@ -114,7 +114,7 @@ export interface MessageSentEvent extends BaseEvent {
 
 export interface MessageReceivedEvent extends BaseEvent {
     type: "MessageReceived";
-    messageType: "RequestVoteResponse" | "AppendEntriesResponse";
+    messageType: "RequestVoteResponse" | "AppendEntriesResponse" | "InstallSnapshotResponse";
     messageId: string;
     fromNodeId: string;
     toNodeId: string;
@@ -173,6 +173,20 @@ export interface AllLinksHealedEvent {
     type: "AllLinksHealed";
 }
 
+export interface SnapshotTakenEvent extends BaseEvent {
+    type: "SnapshotTaken";
+    lastIncludedIndex: number;
+    lastIncludedTerm: number;
+    snapshotSizeBytes: number;
+}
+
+export interface SnapshotInstalledEvent extends BaseEvent {
+    type: "SnapshotInstalled";
+    lastIncludedIndex: number;
+    lastIncludedTerm: number;
+    senderId: string;
+}
+
 export type RaftEvent = 
     | NodeStateChangedEvent
     | TermChangedEvent
@@ -194,7 +208,9 @@ export type RaftEvent =
     | PartitionHealedEvent
     | LinkCutEvent
     | LinkHealedEvent
-    | AllLinksHealedEvent;
+    | AllLinksHealedEvent
+    | SnapshotTakenEvent
+    | SnapshotInstalledEvent;
 
 export interface InitialStateMessage {
     type: "InitialState";
@@ -228,6 +244,7 @@ export interface NodeUIState {
     votedFor: string | null;
     crashed: boolean;
     logEntries: LogEntry[];
+    snapshotIndex: number;
 }
 
 export type ArrowStatus = "inFlight" | "received" | "dropped";
@@ -236,7 +253,7 @@ export interface MessageArrow {
     id: string;
     fromNodeId: string;
     toNodeId: string;
-    messageType: "RequestVote" | "AppendEntries" | "RequestVoteResponse" | "AppendEntriesResponse";
+    messageType: "RequestVote" | "AppendEntries" | "RequestVoteResponse" | "AppendEntriesResponse" | "InstallSnapshotRequest" | "InstallSnapshotResponse";
     status: ArrowStatus;
     createdAt: number;
     isHeartbeat: boolean;
