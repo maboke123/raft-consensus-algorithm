@@ -26,6 +26,8 @@ describe('RaftNode.ts, RaftNode', () => {
     let appStateMachine: {
         apply: ReturnType<typeof vi.fn>;
         getState: ReturnType<typeof vi.fn>;
+        takeSnapshot: ReturnType<typeof vi.fn>;
+        installSnapshot: ReturnType<typeof vi.fn>;
     };
     let node: RaftNode;
     let config: ReturnType<typeof createConfig>;
@@ -80,7 +82,9 @@ describe('RaftNode.ts, RaftNode', () => {
 
         appStateMachine = {
             apply: vi.fn().mockResolvedValue('ok'),
-            getState: vi.fn().mockReturnValue({})
+            getState: vi.fn().mockReturnValue({}),
+            takeSnapshot: vi.fn().mockResolvedValue(Buffer.alloc(0)),
+            installSnapshot: vi.fn().mockResolvedValue(undefined)
         };
 
         config = createConfig(nodeId, peers, 150, 300, 50);
@@ -904,6 +908,117 @@ describe('RaftNode.ts, RaftNode', () => {
         (node as any)['commitWaiters'].set(1, [(_: boolean) => {}]);
 
         timeoutFn();
+    });
+
+    it('should install snapshot on start if one exists', async () => {
+        const snapshotManager = (node as any)['snapshotManager'];
+        vi.spyOn(snapshotManager, 'initialize').mockResolvedValue(undefined);
+        vi.spyOn(snapshotManager, 'loadSnapshot').mockResolvedValue({
+            lastIncludedIndex: 5,
+            lastIncludedTerm: 1,
+            data: Buffer.from('snapshot')
+        });
+
+        const installSpy = vi.fn().mockResolvedValue(undefined);
+        (node as any)['applicationStateMachine'].installSnapshot = installSpy;
+
+        await node.start();
+
+        expect(installSpy).toHaveBeenCalledWith(Buffer.from('snapshot'));
+        expect(node.getCommittedIndex()).toBe(5);
+        expect(node.getLastApplied()).toBe(5);
+    });
+
+    it('should handle InstallSnapshot messages and return a response', async () => {
+        await node.start();
+
+        const handler = transport.onMessage.mock.calls[0][0];
+        const installSnapshotMsg = {
+            type: 'InstallSnapshot',
+            direction: 'request',
+            payload: {
+                term: 1,
+                leaderId: 'node2',
+                lastIncludedIndex: 5,
+                lastIncludedTerm: 1,
+                data: Buffer.from('snapshot')
+            }
+        };
+
+        const response = await handler('node2', installSnapshotMsg);
+        expect(response.type).toBe('InstallSnapshot');
+        expect(response.direction).toBe('response');
+        expect(response.payload).toHaveProperty('success');
+    });
+
+    it('should skip applying entries already covered by snapshot', async () => {
+        await node.start();
+
+        const logManager = (node as any)['logManager'];
+        const volatileState = (node as any)['volatileState'];
+
+        await logManager.appendCommand({ type: 'set', payload: { key: 'x', value: 10 }}, 1);
+        await logManager.appendCommand({ type: 'set', payload: { key: 'y', value: 20 }}, 1);
+
+        logManager['snapshotIndex'] = 2;
+        volatileState.setCommitIndex(2);
+
+        await tickApplyLoop();
+
+        await vi.waitFor(() => {
+            expect(volatileState.getLastApplied()).toBe(2);
+        });
+        expect(appStateMachine.apply).not.toHaveBeenCalled();
+    });
+
+    it('should take snapshot when threshold is reached', async () => {
+        await node.start();
+
+        const logManager = (node as any)['logManager'];
+        const volatileState = (node as any)['volatileState'];
+        const snapshotManager = (node as any)['snapshotManager'];
+
+        (node as any)['snapshotTreshold'] = 2;
+
+        const takeSnapshotSpy = vi.spyOn(node as any, 'takeSnapshot');
+        const saveSnapshotSpy = vi.spyOn(snapshotManager, 'saveSnapshot').mockResolvedValue(undefined);
+
+        appStateMachine.takeSnapshot = vi.fn().mockResolvedValue(Buffer.from('snap'));
+
+        for (let i = 1; i <= 3; i++) {
+            await logManager.appendCommand({ type: 'set', payload: { key: `k${i}`, value: i }}, 1);
+        }
+        volatileState.setCommitIndex(3);
+
+        await tickApplyLoop();
+
+        await vi.waitFor(() => {
+            expect(takeSnapshotSpy).toHaveBeenCalled();
+        });
+    });
+
+    it('should skip snapshot when term cannot be retrieved for snapshot index', async () => {
+        await node.start();
+
+        const logManager = (node as any)['logManager'];
+        const volatileState = (node as any)['volatileState'];
+        const snapshotManager = (node as any)['snapshotManager'];
+
+        (node as any)['snapshotTreshold'] = 1;
+
+        vi.spyOn(logManager, 'getTermAtIndex').mockResolvedValue(null);
+        const saveSnapshotSpy = vi.spyOn(snapshotManager, 'saveSnapshot');
+
+        await logManager.appendCommand({ type: 'set', payload: { key: 'x', value: 10 }}, 1);
+        volatileState.setCommitIndex(1);
+
+        await tickApplyLoop();
+
+        await vi.waitFor(() => {
+            expect(appStateMachine.apply).toHaveBeenCalled();
+        });
+
+        expect(saveSnapshotSpy).not.toHaveBeenCalled();
     });
 });
 
