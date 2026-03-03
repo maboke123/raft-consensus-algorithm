@@ -80,6 +80,10 @@ export class StateMachine implements StateMachineInterface {
     async stop(): Promise<void> {
         this.logger.info(`Node ${this.nodeId} stopping`);
         this.timerManager.stopAllTimers();
+        this.currentState = RaftState.Follower;
+        this.currentLeader = null;
+        this.votesReceived.clear();
+        this.leaderState = null;
     }
 
     getCurrentState(): RaftState {

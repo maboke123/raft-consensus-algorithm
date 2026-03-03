@@ -125,7 +125,7 @@ export class ClusterRunnerGRPC {
     async submitCommand(command: Command, targetLeaderId?: NodeId): Promise<void> {
         const canidates = targetLeaderId
             ? [ this.nodes.get(targetLeaderId)!].filter(Boolean)
-            : Array.from(this.nodes.values()).filter(node => node.isLeader());
+            : Array.from(this.nodes.values()).filter(node => node.isStarted() && node.isLeader());
 
         if (canidates.length === 0) {
             throw new Error('No leader available to submit command');

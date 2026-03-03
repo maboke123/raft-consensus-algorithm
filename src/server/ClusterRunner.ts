@@ -17,6 +17,8 @@ export interface ClusterRunnerOptions {
 class NoOpStateMachine {
     async apply(command: Command): Promise<void> {}
     getState(): null { return null; }
+    async takeSnapshot(): Promise<Buffer> { return Buffer.alloc(0); }
+    async installSnapshot(snapshot: Buffer): Promise<void> {}
 }
 
 export class ClusterRunner {
@@ -108,7 +110,7 @@ export class ClusterRunner {
     async submitCommand(command: Command, targetLeaderId?: NodeId): Promise<void> {
         const canidates = targetLeaderId
             ? [ this.nodes.get(targetLeaderId)!].filter(Boolean)
-            : Array.from(this.nodes.values()).filter(node => node.isLeader());
+            : Array.from(this.nodes.values()).filter(node => node.isStarted() && node.isLeader());
 
         if (canidates.length === 0) {
             throw new Error('No leader available to submit command');
