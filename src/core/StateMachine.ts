@@ -325,8 +325,8 @@ export class StateMachine implements StateMachineInterface {
 
                 await this.applicationStateMachine.installSnapshot(request.data);
 
-                this.volatileState.setLastApplied(request.lastIncludedIndex);
                 this.volatileState.setCommitIndex(request.lastIncludedIndex);
+                this.volatileState.setLastApplied(request.lastIncludedIndex);
             });
 
             await this.becomeFollowerUnlocked(request.term, request.leaderId);
