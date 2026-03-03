@@ -3,14 +3,20 @@ import { isRequestVoteRequestMessage,
         isRequestVoteResponseMessage,
         isAppendEntriesRequestMessage,
         isAppendEntriesResponseMessage,
+        isInstallSnapshotRequestMessage,
+        isInstallSnapshotResponseMessage,
         RequestVoteRequestMessage,
         RequestVoteResponseMessage,
         AppendEntriesRequestMessage,
         AppendEntriesResponseMessage,
+        InstallSnapshotRequestMessage,
+        InstallSnapshotResponseMessage,
         validateAppendEntriesRequest,
         validateAppendEntriesResponse,
         validateRequestVoteRequest,
         validateRequestVoteResponse,
+        validateInstallSnapshotRequest,
+        validateInstallSnapshotResponse,
         validateRPCMessage
         } from "./RPCTypes";
 
@@ -197,6 +203,97 @@ describe('RPCTypes.ts, isAppendEntriesResponseMessage', () => {
 
     it('should return false for invalid AppendEntriesResponseMessage with wrong direction', () => {
         expect(isAppendEntriesResponseMessage(invalidMessage2)).toBe(false);
+    });
+});
+
+describe('RPCTypes.ts, isInstallSnapshotRequestMessage', () => {
+    const validMessage: InstallSnapshotRequestMessage = {
+        type: "InstallSnapshot",
+        direction: "request",
+        payload: {
+            term: 1,
+            leaderId: "node1",
+            lastIncludedIndex: 0,
+            lastIncludedTerm: 0,
+            data: Buffer.from("snapshot data"),
+        }
+    };
+
+    const invalidMessage1 = {
+        type: "RequestVote",
+        direction: "request",
+        payload: {
+            term: 1,
+            leaderId: "node1",
+            lastIncludedIndex: 0,
+            lastIncludedTerm: 0,
+            data: Buffer.from("snapshot data"),
+        }
+    } as any;
+
+    const invalidMessage2 = {
+        type: "InstallSnapshot",
+        direction: "response",
+        payload: {
+            term: 1,
+            leaderId: "node1",
+            lastIncludedIndex: 0,
+            lastIncludedTerm: 0,
+            data: Buffer.from("snapshot data"),
+        }
+    } as any;
+
+    it('should return true for valid InstallSnapshotRequestMessage', () => {
+        expect(isInstallSnapshotRequestMessage(validMessage)).toBe(true);
+    });
+
+    it('should return false for invalid InstallSnapshotRequestMessage with wrong type', () => {
+        expect(isInstallSnapshotRequestMessage(invalidMessage1)).toBe(false);
+    });
+
+    it('should return false for invalid InstallSnapshotRequestMessage with wrong direction', () => {
+        expect(isInstallSnapshotRequestMessage(invalidMessage2)).toBe(false);
+    });
+});
+
+describe('RPCTypes.ts, isInstallSnapshotResponseMessage', () => {
+    const validMessage: InstallSnapshotResponseMessage = {
+        type: "InstallSnapshot",
+        direction: "response",
+        payload: {
+            term: 1,
+            success: true
+        }
+    };
+
+    const invalidMessage1 = {
+        type: "RequestVote",
+        direction: "response",
+        payload: {
+            term: 1,
+            success: true
+        }
+    } as any;
+
+    const invalidMessage2 = {
+        type: "InstallSnapshot",
+        direction: "request",
+        payload: {
+            term: 1,
+            success: true
+        }
+    } as any;
+
+    it('should return true for valid InstallSnapshotResponseMessage', () => {
+        expect(isInstallSnapshotResponseMessage(validMessage)).toBe(true);
+    });
+
+    it('should return false for invalid InstallSnapshotResponseMessage with wrong type', () => {
+        expect(isInstallSnapshotResponseMessage(invalidMessage1)).toBe(false);
+    });
+
+    it('should return false for invalid InstallSnapshotResponseMessage with wrong direction', () => {
+        expect(isInstallSnapshotResponseMessage(invalidMessage2)).toBe(false);
     });
 });
 
@@ -604,6 +701,155 @@ describe('RPCTypes.ts, validateAppendEntriesResponse', () => {
     });
 });
 
+describe('RPCTypes.ts, validateInstallSnapshotRequest', () => {
+
+    const validRequest = {
+        term: 1,
+        leaderId: "node1",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest1 = {
+        term: "not an integer" as any,
+        leaderId: "node1",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest2 = {
+        term: -1,
+        leaderId: "node1",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest3 = {
+        term: 1,
+        leaderId: "",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest4 = {
+        term: 1,
+        leaderId: 123 as any,
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest5 = {
+        term: 1,
+        leaderId: "node1",
+        lastIncludedIndex: "not an integer" as any,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest6 = {
+        term: 1,
+        leaderId: "node1",
+        lastIncludedIndex: -1,
+        lastIncludedTerm: 0,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest7 = {
+        term: 1,
+        leaderId: "node1",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: "not an integer" as any,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest8 = {
+        term: 1,
+        leaderId: "node1",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: -1,
+        data: Buffer.from("snapshot data"),
+    };
+    const invalidRequest9 = {
+        term: 1,
+        leaderId: "node1",
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: "not a buffer" as any,
+    };
+
+    it('should not throw error for valid InstallSnapshotRequest', () => {
+        expect(() => validateInstallSnapshotRequest(validRequest)).not.toThrow();
+    });
+
+    it('should throw error for non integer term', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest1)).toThrow("Invalid term: not an integer. term must be a non-negative integer.");
+    });
+
+    it('should throw error for negative term', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest2)).toThrow("Invalid term: -1. term must be a non-negative integer.");
+    });
+
+    it('should throw error for empty leaderId', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest3)).toThrow("Invalid leaderId: . leaderId must be a non-empty string.");
+    });
+
+    it('should throw error for non string leaderId', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest4)).toThrow("Invalid leaderId: 123. leaderId must be a non-empty string.");
+    });
+
+    it('should throw error for non integer lastIncludedIndex', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest5)).toThrow("Invalid lastIncludedIndex: not an integer. lastIncludedIndex must be a non-negative integer.");
+    });
+
+    it('should throw error for negative lastIncludedIndex', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest6)).toThrow("Invalid lastIncludedIndex: -1. lastIncludedIndex must be a non-negative integer.");
+    });
+
+    it('should throw error for non integer lastIncludedTerm', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest7)).toThrow("Invalid lastIncludedTerm: not an integer. lastIncludedTerm must be a non-negative integer.");
+    });
+
+    it('should throw error for negative lastIncludedTerm', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest8)).toThrow("Invalid lastIncludedTerm: -1. lastIncludedTerm must be a non-negative integer.");
+    });
+
+    it('should throw error for non buffer data', () => {
+        expect(() => validateInstallSnapshotRequest(invalidRequest9)).toThrow("Invalid data: not a buffer. data must be a Buffer.");
+    });
+});
+
+describe('RPCTypes.ts, validateInstallSnapshotResponse', () => {
+    const validResponse = {
+        term: 1,
+        success: true
+    };
+    const invalidResponse1 = {
+        term: "not an integer" as any,
+        success: true
+    };
+    const invalidResponse2 = {
+        term: -1,
+        success: true
+    };
+    const invalidResponse3 = {
+        term: 1,
+        success: "not a boolean" as any
+     };
+
+    it('should not throw error for valid InstallSnapshotResponse', () => {
+        expect(() => validateInstallSnapshotResponse(validResponse)).not.toThrow();
+    });
+
+    it('should throw error for non integer term', () => {
+        expect(() => validateInstallSnapshotResponse(invalidResponse1)).toThrow("Invalid term: not an integer. term must be a non-negative integer.");
+    });
+
+    it('should throw error for negative term', () => {
+        expect(() => validateInstallSnapshotResponse(invalidResponse2)).toThrow("Invalid term: -1. term must be a non-negative integer.");
+    });
+
+    it('should throw error for non boolean success', () => {
+        expect(() => validateInstallSnapshotResponse(invalidResponse3)).toThrow("Invalid success: not a boolean. success must be a boolean.");
+    });
+});
+
 describe('RPCTypes.ts, validateRPCMessage', () => {
     const validMessage: RequestVoteRequestMessage = {
         type: "RequestVote",
@@ -646,6 +892,25 @@ describe('RPCTypes.ts, validateRPCMessage', () => {
             conflictTerm: 0
         }
     };
+    const validMessage5: InstallSnapshotRequestMessage = {
+        type: "InstallSnapshot",
+        direction: "request",
+        payload: {
+            term: 1,
+            leaderId: "node1",
+            lastIncludedIndex: 0,
+            lastIncludedTerm: 0,
+            data: Buffer.from("snapshot data"),
+        }
+    };
+    const validMessage6: InstallSnapshotResponseMessage = {
+        type: "InstallSnapshot",
+        direction: "response",
+        payload: {
+            term: 1,
+            success: true
+        }
+    };
     const invalidMessage1 = {
         type: "InvalidType",
         direction: "request",
@@ -671,6 +936,14 @@ describe('RPCTypes.ts, validateRPCMessage', () => {
 
     it ('should not throw error for valid RPCMessage of type AppendEntriesResponse', () => {
         expect(() => validateRPCMessage(validMessage4)).not.toThrow();
+    });
+
+    it ('should not throw error for valid RPCMessage of type InstallSnapshotRequest', () => {
+        expect(() => validateRPCMessage(validMessage5)).not.toThrow();
+    });
+
+    it ('should not throw error for valid RPCMessage of type InstallSnapshotResponse', () => {
+        expect(() => validateRPCMessage(validMessage6)).not.toThrow();
     });
 
     it('should throw error for invalid RPCMessage with unknown type', () => {

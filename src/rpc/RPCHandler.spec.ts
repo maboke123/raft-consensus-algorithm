@@ -43,6 +43,19 @@ describe('RPCHandler.ts, RPCHandler', () => {
         success: true
     };
 
+    const installSnapshotRequest = {
+        term: 1,
+        leaderId: nodeId,
+        lastIncludedIndex: 0,
+        lastIncludedTerm: 0,
+        data: Buffer.from('snapshot data'),
+    };
+
+    const installSnapshotResponse = {
+        term: 1,
+        success: true
+    };
+
     beforeEach(() => {
         transport = {
             send: vi.fn()
@@ -122,6 +135,38 @@ describe('RPCHandler.ts, RPCHandler', () => {
         await expect(rpcHandler.sendAppendEntries(peerId, appendEntriesRequest)).rejects.toThrow(RPCHandlerError);
     });
 
+    it('should send InstallSnapshot and receive valid response', async () => {
+        const responseMessage: RPCMessage = {
+            type: "InstallSnapshot",
+            direction: 'response',
+            payload: installSnapshotResponse
+        };
+
+        transport.send.mockResolvedValue(responseMessage);
+
+        const response = await rpcHandler.sendInstallSnapshot(peerId, installSnapshotRequest);
+
+        expect(response).toEqual(installSnapshotResponse);
+        expect(transport.send).toHaveBeenCalledWith(peerId, expect.objectContaining({
+            type: "InstallSnapshot",
+            direction: 'request',
+            payload: installSnapshotRequest
+        }));
+        expect(logger.debug).toHaveBeenCalledTimes(2);
+    });
+
+    it('should throw if response type is invalid for InstallSnapshot', async () => {
+        const invalidResponseMessage: RPCMessage = {
+            type: "AppendEntries",
+            direction: 'response',
+            payload: appendEntriesResponse
+        };
+
+        transport.send.mockResolvedValue(invalidResponseMessage);
+
+        await expect(rpcHandler.sendInstallSnapshot(peerId, installSnapshotRequest)).rejects.toThrow(RPCHandlerError);
+    });
+
     it('should throw if RPC times out', async () => {
         transport.send.mockReturnValue(new Promise(() => {}));
 
@@ -163,7 +208,8 @@ describe('RPCHandler.ts, RPCHandler', () => {
     it('should handle incoming requestVote requests and send valid responses', async () => {
         const handler = {
             onRequestVote: vi.fn().mockResolvedValue(requestVoteResponse),
-            onAppendEntries: vi.fn()
+            onAppendEntries: vi.fn(),
+            onInstallSnapshot: vi.fn()
         }
 
         const requestMessage: RPCMessage = {
@@ -185,7 +231,8 @@ describe('RPCHandler.ts, RPCHandler', () => {
     it('should handle incoming appendEntries requests and send valid responses', async () => {
         const handler = {
             onRequestVote: vi.fn(),
-            onAppendEntries: vi.fn().mockResolvedValue(appendEntriesResponse)
+            onAppendEntries: vi.fn().mockResolvedValue(appendEntriesResponse),
+            onInstallSnapshot: vi.fn()
         }
 
         const requestMessage: RPCMessage = {
@@ -204,10 +251,34 @@ describe('RPCHandler.ts, RPCHandler', () => {
         });
     });
 
+    it('should handle incoming installSnapshot requests and send valid responses', async () => {
+        const handler = {
+            onRequestVote: vi.fn(),
+            onAppendEntries: vi.fn(),
+            onInstallSnapshot: vi.fn().mockResolvedValue(installSnapshotResponse)
+        }
+
+        const requestMessage: RPCMessage = {
+            type: "InstallSnapshot",
+            direction: 'request',
+            payload: installSnapshotRequest
+        };
+
+        const responseMessage = await rpcHandler.handleIncomingMessage(peerId, requestMessage, handler);
+
+        expect(handler.onInstallSnapshot).toHaveBeenCalledWith(peerId, installSnapshotRequest);
+        expect(responseMessage).toEqual({
+            type: "InstallSnapshot",
+            direction: 'response',
+            payload: installSnapshotResponse
+        });
+    });
+
     it('should throw if incoming message type is unknown', async () => {
         const handler = {
             onRequestVote: vi.fn(),
-            onAppendEntries: vi.fn()
+            onAppendEntries: vi.fn(),
+            onInstallSnapshot: vi.fn()
         }
 
         const requestMessage: RPCMessage = {
@@ -217,6 +288,34 @@ describe('RPCHandler.ts, RPCHandler', () => {
         };
 
         await expect(rpcHandler.handleIncomingMessage(peerId, requestMessage, handler)).rejects.toThrow(RPCHandlerError);
+    });
+
+    it('should emit MessageDropped with reason "peer down" when sendAppendEntries throws NetworkError', async () => {
+        const eventBus = { emit: vi.fn() };
+        const handler = new RPCHandler(nodeId, transport as any, logger as any, clock as any, eventBus as any);
+
+        transport.send.mockRejectedValue(new NetworkError('connection refused'));
+
+        await expect(handler.sendAppendEntries(peerId, appendEntriesRequest)).rejects.toThrow(NetworkError);
+
+        expect(eventBus.emit).toHaveBeenCalledWith(expect.objectContaining({
+            type: "MessageDropped",
+            reason: "peer down"
+        }));
+    });
+
+    it('should emit MessageDropped with reason "peer down" when sendInstallSnapshot throws NetworkError', async () => {
+        const eventBus = { emit: vi.fn() };
+        const handler = new RPCHandler(nodeId, transport as any, logger as any, clock as any, eventBus as any);
+
+        transport.send.mockRejectedValue(new NetworkError('connection refused'));
+
+        await expect(handler.sendInstallSnapshot(peerId, installSnapshotRequest)).rejects.toThrow(NetworkError);
+
+        expect(eventBus.emit).toHaveBeenCalledWith(expect.objectContaining({
+            type: "MessageDropped",
+            reason: "peer down"
+        }));
     });
 
 });
