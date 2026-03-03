@@ -17,9 +17,9 @@ export interface SnapshotManagerInterface {
     getSnapshotMetadata(): SnapshotMetaData | null;
 }
 
-const SNAPSHOT_INDEX_KEY = "raft:log:snapshot:index";
-const SNAPSHOT_TERM_KEY = "raft:log:snapshot:term";
-const SNAPSHOT_DATA_KEY = "raft:log:snapshot:data";
+export const SNAPSHOT_INDEX_KEY = "raft:log:snapshot:index";
+export const SNAPSHOT_TERM_KEY = "raft:log:snapshot:term";
+export const SNAPSHOT_DATA_KEY = "raft:log:snapshot:data";
 
 export class SnapshotManager implements SnapshotManagerInterface {
 
