@@ -1,9 +1,10 @@
-import { LogEntry, validateLogEntry, Command } from './LogEntry';
+import { LogEntry, validateLogEntry, Command, LogEntryType } from './LogEntry';
 import { StorageError, LogInconsistencyError } from '../util/Error';
 import { Storage, StorageOperation, StorageCodec } from '../storage/Storage';
 import { RaftEventBus } from '../events/RaftEvents';
 import { NoOpEventBus } from '../events/EventBus';
 import { NodeId } from '../core/Config';
+import { ClusterConfig } from '../config/ClusterConfig';
 
 export interface LogManagerInterface {
     initialize(): Promise<void>;
@@ -493,6 +494,7 @@ export class LogManager implements LogManagerInterface {
         const entry: LogEntry = {
             index: idx,
             term: term,
+            type: LogEntryType.COMMAND,
             command: command
         };
 
@@ -603,6 +605,35 @@ export class LogManager implements LogManagerInterface {
     getSnapshotIndex(): number {
         this.ensureInitialized();
         return this.snapshotIndex;
+    }
+
+    async appendConfigEntry(config: ClusterConfig, term: number): Promise<number> {
+
+        const idx = this.lastIndex + 1;
+
+        const entry: LogEntry = {
+            index: idx,
+            term: term,
+            type: LogEntryType.CONFIG,
+            config: config
+        };
+
+        await this.appendEntry(entry);
+
+        return idx;
+    }
+
+    async getLastConfigEntry(): Promise<ClusterConfig | null> {
+        this.ensureInitialized();
+
+        for (let i = this.lastIndex; i > this.snapshotIndex; i--) {
+            const entry = await this.getEntry(i);
+            if (entry && entry.type === LogEntryType.CONFIG && entry.config) {
+                return entry.config;
+            }
+        }
+
+        return null;
     }
 
     private async safeStorage<T>(fn : () => Promise<T>, context: string): Promise<T> {
