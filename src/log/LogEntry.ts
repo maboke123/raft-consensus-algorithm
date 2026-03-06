@@ -1,12 +1,21 @@
+import { ClusterConfig } from "../config/ClusterConfig";
+
 export interface Command {
   type: string;
   payload: any;
 }
 
+export enum LogEntryType {
+    COMMAND = 'COMMAND',
+    CONFIG = 'CONFIG',
+}
+
 export interface LogEntry {
   term: number;
   index: number;
-  command: Command;
+  type: LogEntryType;
+  command?: Command;
+  config?: ClusterConfig
 }
 
 export function validateLogEntry(entry: LogEntry): void {
@@ -18,12 +27,24 @@ export function validateLogEntry(entry: LogEntry): void {
         throw new Error(`Invalid index: ${entry.index}. Index must be a non-negative integer.`);
     }
 
-    if (!entry.command || typeof entry.command !== 'object') {
-        throw new Error(`Invalid command: ${entry.command}. Command must be an object`);
-    }
+    if (entry.type === LogEntryType.COMMAND) {
+        if (!entry.command || typeof entry.command !== 'object') {
+            throw new Error(`Invalid command: ${entry.command}. Command must be an object`);
+        }
 
-    if (!entry.command.type || typeof entry.command.type !== 'string') {
-        throw new Error(`Invalid command type: ${entry.command.type}. Type must be a string`);
+        if (!entry.command.type || typeof entry.command.type !== 'string') {
+            throw new Error(`Invalid command type: ${entry.command.type}. Type must be a string`);
+        }
+    } else if (entry.type === LogEntryType.CONFIG) {
+        if (!entry.config || typeof entry.config !== 'object') {
+            throw new Error(`Invalid config: ${entry.config}. Config must be an object`);
+        }
+
+        if (!Array.isArray(entry.config.voters) || !Array.isArray(entry.config.learners)) {
+            throw new Error(`Invalid config: ${entry.config}. Voters and learners must be arrays`);
+        }
+    } else {
+        throw new Error(`Invalid log entry type: ${entry.type}. Type must be either COMMAND or CONFIG`);
     }
 }
 
@@ -65,7 +86,17 @@ export function entriesEqual(entry1: LogEntry, entry2: LogEntry): boolean {
         return false;
     }
 
-    return commandsEqual(entry1.command, entry2.command);
+    if (entry1.type !== entry2.type) {
+        return false;
+    }
+
+    if (entry1.type === LogEntryType.CONFIG) {
+        const config1 = JSON.stringify(entry1.config);
+        const config2 = JSON.stringify(entry2.config);
+        return config1 === config2;
+    }
+
+    return commandsEqual(entry1.command!, entry2.command!);
 }
 
 export function logsEqual(log1: LogEntry[], log2: LogEntry[]): boolean {
