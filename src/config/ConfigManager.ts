@@ -3,8 +3,8 @@ import { Storage, StorageCodec } from "../storage/Storage";
 import { StorageError } from "../util/Error";
 import { ClusterConfig, clusterConfigsEqual, getQuorumSize, isLearner, isVoter } from "./ClusterConfig";
 
-const CONFIG_VOTERS_KEY = "raft:config:voters";
-const CONFIG_LEARNERS_KEY = "raft:config:learners";
+export const CONFIG_VOTERS_KEY = "raft:config:voters";
+export const CONFIG_LEARNERS_KEY = "raft:config:learners";
 
 export interface ConfigManagerInterface {
     applyConfigEntry(config: ClusterConfig): void;
