@@ -142,5 +142,101 @@ export class ClusterRunnerGRPC {
     healLink(nodeA: NodeId, nodeB: NodeId): void {}
 
     healAllLinks(): void {}
+
+    async addServer(nodeId: NodeId, address: string, asLearner: boolean): Promise<void> {
+
+        if (this.nodes.has(nodeId)) {
+            throw new Error(`Node ${nodeId} already exists in the cluster`);
+        }
+
+        const port = parseInt(address.split(':')[1]);
+        if (isNaN(port)) {
+            throw new Error(`Invalid address format: ${address}`);
+        }
+
+        const addressMap: Record<NodeId, string> = {};
+        this.nodeIds.forEach(id => {
+            if (id !== nodeId) {
+                addressMap[id] = `localhost:${52000 + this.nodeIds.indexOf(id)}`;
+            }
+        });
+
+        const peers = Object.fromEntries(
+            Object.entries(addressMap).filter(([id]) => id !== nodeId)
+        );
+
+        const peerIds = this.nodeIds.filter(id => id !== nodeId);
+        const config = createConfig(
+            nodeId,
+            peerIds,
+            this.options.timerConfig.electionTimeoutMin,
+            this.options.timerConfig.electionTimeoutMax,
+            this.options.timerConfig.heartbeatInterval
+        );
+
+        const storage = new DiskStorage(path.join(__dirname, "../../data", nodeId));
+        await storage.open();
+
+        const transport = new GrpcTransport(
+            nodeId,
+            port,
+            peers,
+            {
+                caCert: path.join(__dirname, "../../certs/ca/ca.crt"),
+                nodeCert: path.join(__dirname, `../../certs/${nodeId}`, `${nodeId}.crt`),
+                nodeKey: path.join(__dirname, `../../certs/${nodeId}`, `${nodeId}.key`)
+            },
+            400,
+            3000
+        );
+
+        const node = new RaftNode(
+            config,
+            storage,
+            transport,
+            new NoOpStateMachine(),
+            new SystemClock(),
+            new SystemRandom(),
+            undefined,
+            this.bus
+        );
+
+        this.nodes.set(nodeId, node);
+        this.nodeIds.push(nodeId);
+
+        await node.start();
+
+        const leader = Array.from(this.nodes.values()).find(n => n.isStarted() && n.isLeader());
+        if (!leader) {
+            this.nodes.delete(nodeId);
+            this.nodeIds.pop();
+            await node.stop();
+            throw new Error('No leader available to add server');
+        }
+
+        const success = await leader.addServer(nodeId, address, asLearner);
+        if (!success) {
+            this.nodes.delete(nodeId);
+            this.nodeIds.pop();
+            await node.stop();
+            throw new Error(`Failed to add server ${nodeId} to the cluster`);
+        }
+    }
+
+    async removeServer(nodeId: NodeId): Promise<void> {
+        const leader = Array.from(this.nodes.values()).find(n => n.isStarted() && n.isLeader());
+        if (!leader) {
+            throw new Error('No leader available to remove server');
+        }
+        await leader.removeServer(nodeId);
+    }
+
+    async promoteServer(nodeId: NodeId): Promise<void> {
+        const leader = Array.from(this.nodes.values()).find(n => n.isStarted() && n.isLeader());
+        if (!leader) {
+            throw new Error('No leader available to promote server');
+        }
+        await leader.promoteServer(nodeId);
+    }
 }
 

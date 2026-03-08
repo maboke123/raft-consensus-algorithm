@@ -6,6 +6,11 @@ export interface LogEntry {
     command: unknown;
 }
 
+export interface ClusterConfig {
+    voters: string[];
+    learners: string[];
+}
+
 interface BaseEvent {
     eventId: string;
     timestamp: number;
@@ -189,6 +194,39 @@ export interface SnapshotInstalledEvent extends BaseEvent {
     senderId: string;
 }
 
+export interface ServerAddedEvent extends BaseEvent {
+    type: "ServerAdded";
+    addedNodeId: string;
+    asLearner: boolean;
+    config: ClusterConfig;
+}
+
+export interface ServerRemovedEvent extends BaseEvent {
+    type: "ServerRemoved";
+    removedNodeId: string;
+    config: ClusterConfig;
+}
+
+export interface LearnerPromotedEvent extends BaseEvent {
+    type: "LearnerPromoted";
+    promotedNodeId: string;
+    config: ClusterConfig;
+}
+
+export interface ConfigChangedEvent extends BaseEvent {
+    type: "ConfigChanged";
+    voters: string[];
+    learners: string[];
+    commited: boolean;
+}
+
+export interface ConfigChangeRejectedEvent extends BaseEvent {
+    type: "ConfigChangeRejected";
+    voters: string[];
+    learners: string[];
+    reason: string;
+}
+
 export type RaftEvent = 
     | NodeStateChangedEvent
     | TermChangedEvent
@@ -212,12 +250,18 @@ export type RaftEvent =
     | LinkHealedEvent
     | AllLinksHealedEvent
     | SnapshotTakenEvent
-    | SnapshotInstalledEvent;
+    | SnapshotInstalledEvent
+    | ServerAddedEvent
+    | ServerRemovedEvent
+    | LearnerPromotedEvent
+    | ConfigChangedEvent
+    | ConfigChangeRejectedEvent;
 
 export interface InitialStateMessage {
     type: "InitialState";
     events: RaftEvent[];
     nodeIds: string[];
+    config?: ClusterConfig;
 }
 
 export interface LiveEventMessage {
@@ -236,7 +280,10 @@ export type ClientCommand =
     | { type: "SetDropRate"; nodeId: string; dropRate: number }
     | { type: "CutLink"; nodeA: string; nodeB: string }
     | { type: "HealLink"; nodeA: string; nodeB: string }
-    | { type: "HealAllLinks" };
+    | { type: "HealAllLinks" }
+    | { type: "AddServer"; nodeId: string; address: string; asLearner: boolean }
+    | { type: "RemoveServer"; nodeId: string }
+    | { type: "PromoteLearner"; nodeId: string }
 
 export interface NodeUIState {
     nodeId: string;
@@ -247,6 +294,7 @@ export interface NodeUIState {
     crashed: boolean;
     logEntries: LogEntry[];
     snapshotIndex: number;
+    isLearner: boolean;
 }
 
 export type ArrowStatus = "inFlight" | "received" | "dropped";

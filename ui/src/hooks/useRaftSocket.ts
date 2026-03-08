@@ -27,7 +27,7 @@ export function useRaftSocket() {
 
                 if (data.type === "InitialState") {
                     reset();
-                    setNodeIds(data.nodeIds);
+                    setNodeIds(data.nodeIds, data.config);
 
                     for (const event of data.events) {
                         processEvent(event);

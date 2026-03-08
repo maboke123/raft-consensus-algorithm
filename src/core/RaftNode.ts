@@ -507,10 +507,34 @@ export class RaftNode implements RaftNodeInterface {
             ? { voters: currentConfig.voters, learners: [...currentConfig.learners, nodeId] }
             : { voters: [...currentConfig.voters, nodeId], learners: currentConfig.learners };
 
-        await this.submitConfigChange(newConfig);
+        const result = await this.submitConfigChange(newConfig);
 
         this.logger.info(`Initiated adding server ${nodeId} as ${asLearner ? 'learner' : 'voter'} to the cluster`);
-        return true;
+
+        if (result) {
+            this.bus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.config.nodeId,
+                type: "ServerAdded",
+                addedNodeId: nodeId,
+                asLearner: asLearner,
+                config: this.configManager.getCommittedConfig()
+            });
+        } else {
+            this.bus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.config.nodeId,
+                type: "ConfigChangeRejected",
+                voters: newConfig.voters,
+                learners: newConfig.learners,
+                reason: "Failed to commit configuration change"
+            });
+        }
+        return result;
     }
 
     async removeServer(nodeId: NodeId): Promise<boolean> {
@@ -549,6 +573,16 @@ export class RaftNode implements RaftNodeInterface {
 
         if (result) {
             await this.transport.removePeer?.(nodeId);
+
+            this.bus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.config.nodeId,
+                type: "ServerRemoved",
+                removedNodeId: nodeId,
+                config: this.configManager.getCommittedConfig()
+            });
         }
 
         return result;
@@ -581,10 +615,22 @@ export class RaftNode implements RaftNodeInterface {
             learners: currentConfig.learners.filter(id => id !== nodeId)
         };
 
-        await this.submitConfigChange(newConfig);
+        const result = await this.submitConfigChange(newConfig);
 
         this.logger.info(`Initiated promoting server ${nodeId} to voter`);
-        return true;
+
+        if (result) {
+            this.bus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.config.nodeId,
+                type: "LearnerPromoted",
+                promotedNodeId: nodeId,
+                config: this.configManager.getCommittedConfig()
+            });
+        }
+        return result;
     }
 
     private async submitConfigChange(newConfig: ClusterConfig): Promise<boolean> {
@@ -595,6 +641,17 @@ export class RaftNode implements RaftNodeInterface {
             const term = this.persistentState.getCurrentTerm();
             const idx = await this.logManager.appendConfigEntry(newConfig, term);
             this.configManager.applyConfigEntry(newConfig);
+
+            this.bus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.config.nodeId,
+                type: "ConfigChanged",
+                voters: newConfig.voters,
+                learners: newConfig.learners,
+                commited: false
+            });
 
             if (!this.stateMachine.isLeader() || this.persistentState.getCurrentTerm() !== term) {
                 this.logger.warn(`Node ${this.config.nodeId} is no longer the leader or term has changed after appending config entry. Current term: ${this.persistentState.getCurrentTerm()}, expected term: ${term}`);
@@ -614,6 +671,19 @@ export class RaftNode implements RaftNodeInterface {
         await this.triggerReplication();
 
         const committed = await this.waitForCommit(capturedIndex, 5000, capturedTerm);
+
+        if (committed) {
+            this.bus.emit({
+                eventId: crypto.randomUUID(),
+                timestamp: performance.now(),
+                wallTime: Date.now(),
+                nodeId: this.config.nodeId,
+                type: "ConfigChanged",
+                voters: newConfig.voters,
+                learners: newConfig.learners,
+                commited: true
+            });
+        }
 
         return committed;
     }

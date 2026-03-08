@@ -3,7 +3,7 @@
 set -e
 
 CERTS_DIR="./certs"
-NODES=("node1" "node2" "node3")
+NODES=("node1" "node2" "node3" "node4" "node5" "node6")
 DAYS_VALID=365
 
 mkdir -p "$CERTS_DIR/ca"

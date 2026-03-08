@@ -109,6 +109,15 @@ export class WsServer {
             case "HealAllLinks":
                 this.cluster.healAllLinks();
                 break;
+            case "AddServer":
+                this.cluster.addServer(message.nodeId, message.address, message.asLearner);
+                break;
+            case "RemoveServer":
+                this.cluster.removeServer(message.nodeId);
+                break;
+            case "PromoteLearner":
+                this.cluster.promoteServer(message.nodeId);
+                break;
             default:
                 console.warn("Unknown message type from client:", message);
         }
