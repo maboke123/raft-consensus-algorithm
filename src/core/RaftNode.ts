@@ -1,5 +1,5 @@
 import { NodeId, RaftConfig, validateConfig } from "./Config";
-import { Command, LogEntry } from "../log/LogEntry";
+import { Command, LogEntry, LogEntryType } from "../log/LogEntry";
 import { RaftState } from "./StateMachine";
 import { PersistentState } from "../state/PersistentState";
 import { VolatileState } from "../state/VolatileState";
@@ -18,6 +18,9 @@ import { RaftEventBus } from "../events/RaftEvents";
 import { NoOpEventBus } from "../events/EventBus";
 import { SnapshotManager } from "../snapshot/SnapshotManager";
 import { InstallSnapshotRequest, InstallSnapshotResponse } from "../rpc/RPCTypes";
+import { ConfigManager } from "../config/ConfigManager";
+import { ClusterConfig } from "../config/ClusterConfig";
+import { GrpcTransport } from "../transport/GRPCTransport";
 
 export interface CommandResult {
     success: boolean;
@@ -70,6 +73,8 @@ export class RaftNode implements RaftNodeInterface {
     private snapshotTreshold: number = 5;
     private snapshotManager: SnapshotManager;
 
+    private configManager: ConfigManager;
+
     constructor(
         private config: RaftConfig,
         private storage: Storage,
@@ -114,9 +119,16 @@ export class RaftNode implements RaftNodeInterface {
 
         this.snapshotManager = new SnapshotManager(storage);
 
+        const bootstrapConfig: ClusterConfig = {
+            voters: [config.nodeId, ...config.peerIds],
+            learners: []
+        };
+
+        this.configManager = new ConfigManager(storage, bootstrapConfig);
+
         this.stateMachine = new StateMachine(
             config.nodeId,
-            config.peerIds,
+            this.configManager,
             config,
             this.persistentState,
             this.volatileState,
@@ -163,13 +175,27 @@ export class RaftNode implements RaftNodeInterface {
 
             await this.snapshotManager.initialize();
 
+            await this.configManager.initialize();
+
             const snapshot = await this.snapshotManager.loadSnapshot();
 
             if (snapshot) {
+                if (snapshot.config.voters.length > 0) {
+                    this.configManager.applyConfigEntry(snapshot.config);
+                    await this.configManager.commitConfig(snapshot.config);
+                    this.logger.info(`Node ${this.config.nodeId} loaded cluster configuration from snapshot: voters=${snapshot.config.voters.join(',')}, learners=${snapshot.config.learners.join(',')}`);
+                }
                 await this.applicationStateMachine.installSnapshot(snapshot.data);
                 this.volatileState.setCommitIndex(snapshot.lastIncludedIndex);
                 this.volatileState.setLastApplied(snapshot.lastIncludedIndex);
                 this.logger.info(`Node ${this.config.nodeId} loaded snapshot with last included index ${snapshot.lastIncludedIndex} and term ${snapshot.lastIncludedTerm}`);
+            }
+
+            const latestLogConfig = await this.logManager.getLastConfigEntry();
+
+            if (latestLogConfig) {
+                this.configManager.applyConfigEntry(latestLogConfig);
+                this.logger.info(`Node ${this.config.nodeId} applied cluster configuration from log entry: voters=${latestLogConfig.voters.join(',')}, learners=${latestLogConfig.learners.join(',')}`);
             }
 
             if(!this.transport.isStarted()) {
@@ -421,8 +447,13 @@ export class RaftNode implements RaftNodeInterface {
                 }
 
                 try {
-                    const result = await this.applicationStateMachine.apply(entry.command);
-                    this.logger.info(`Applied log entry at index ${nextIndex} with command ${JSON.stringify(entry.command)}, result: ${JSON.stringify(result)}`);
+                    if (entry.type === LogEntryType.CONFIG) {
+                        this.logger.info('skipping CONFIG entry');
+                    } else {
+                        const result = await this.applicationStateMachine.apply(entry.command!);
+                        this.logger.info(`Applied log entry at index ${nextIndex} with command ${JSON.stringify(entry.command)}, result: ${JSON.stringify(result)}`);
+                    }
+
                     this.volatileState.setLastApplied(nextIndex);
 
                     const currentLastApplied = this.volatileState.getLastApplied();
@@ -446,6 +477,145 @@ export class RaftNode implements RaftNodeInterface {
         if (this.stateMachine.isLeader()) {
             await this.stateMachine.triggerReplication();
         }
+    }
+
+    async addServer(nodeId: NodeId, address: string, asLearner: boolean = false): Promise<boolean> {
+        if(!this.started){
+            this.logger.warn(`Node ${this.config.nodeId} is not started, cannot add server ${nodeId}`);
+            return false;
+        }
+
+        if (!this.stateMachine.isLeader()) {
+            this.logger.warn(`Node ${this.config.nodeId} is not the leader, cannot add server ${nodeId}`);
+            return false;
+        }
+
+        if (this.configManager.hasPendingChange()) {
+            this.logger.warn(`Node ${this.config.nodeId} already has a pending configuration change, cannot add server ${nodeId} until it is committed`);
+            return false;
+        }
+
+        const currentConfig = this.configManager.getActiveConfig();
+        if (currentConfig.voters.includes(nodeId) || currentConfig.learners.includes(nodeId)) {
+            this.logger.warn(`Node ${nodeId} is already part of the cluster configuration, cannot add again`);
+            return false;
+        }
+
+        await this.transport.addPeer?.(nodeId, address);
+
+        const newConfig: ClusterConfig = asLearner
+            ? { voters: currentConfig.voters, learners: [...currentConfig.learners, nodeId] }
+            : { voters: [...currentConfig.voters, nodeId], learners: currentConfig.learners };
+
+        await this.submitConfigChange(newConfig);
+
+        this.logger.info(`Initiated adding server ${nodeId} as ${asLearner ? 'learner' : 'voter'} to the cluster`);
+        return true;
+    }
+
+    async removeServer(nodeId: NodeId): Promise<boolean> {
+        if(!this.started){
+            this.logger.warn(`Node ${this.config.nodeId} is not started, cannot remove server ${nodeId}`);
+            return false;
+        }
+
+        if (!this.stateMachine.isLeader()) {
+            this.logger.warn(`Node ${this.config.nodeId} is not the leader, cannot remove server ${nodeId}`);
+            return false;
+        }
+
+        if (this.configManager.hasPendingChange()) {
+            this.logger.warn(`Node ${this.config.nodeId} already has a pending configuration change, cannot remove server ${nodeId} until it is committed`);
+            return false;
+        }
+
+        const currentConfig = this.configManager.getActiveConfig();
+        if (!currentConfig.voters.includes(nodeId) && !currentConfig.learners.includes(nodeId)) {
+            this.logger.warn(`Node ${nodeId} is not part of the cluster configuration, cannot remove`);
+            return false;
+        }
+
+        if (currentConfig.voters.includes(nodeId) && currentConfig.voters.length <= 2) {
+            this.logger.warn(`Cannot remove voter ${nodeId} since it would leave the cluster with less than 2 voters`);
+            return false;
+        }
+
+        const newConfig: ClusterConfig = {
+            voters: currentConfig.voters.filter(id => id !== nodeId),
+            learners: currentConfig.learners.filter(id => id !== nodeId)
+        };
+
+        const result = await this.submitConfigChange(newConfig);
+
+        if (result) {
+            await this.transport.removePeer?.(nodeId);
+        }
+
+        return result;
+    }
+
+    async promoteServer(nodeId: NodeId): Promise<boolean> {
+        if(!this.started){
+            this.logger.warn(`Node ${this.config.nodeId} is not started, cannot promote server ${nodeId}`);
+            return false;
+        }
+
+        if (!this.stateMachine.isLeader()) {
+            this.logger.warn(`Node ${this.config.nodeId} is not the leader, cannot promote server ${nodeId}`);
+            return false;
+        }
+
+        if (this.configManager.hasPendingChange()) {
+            this.logger.warn(`Node ${this.config.nodeId} already has a pending configuration change, cannot promote server ${nodeId} until it is committed`);
+            return false;
+        }
+
+        const currentConfig = this.configManager.getActiveConfig();
+        if (!currentConfig.learners.includes(nodeId)) {
+            this.logger.warn(`Node ${nodeId} is not a learner, cannot promote`);
+            return false;
+        }
+
+        const newConfig: ClusterConfig = {
+            voters: [...currentConfig.voters, nodeId],
+            learners: currentConfig.learners.filter(id => id !== nodeId)
+        };
+
+        await this.submitConfigChange(newConfig);
+
+        this.logger.info(`Initiated promoting server ${nodeId} to voter`);
+        return true;
+    }
+
+    private async submitConfigChange(newConfig: ClusterConfig): Promise<boolean> {
+        let capturedIndex: number | null = null;
+        let capturedTerm: number | null = null;
+
+        const appendResult = await this.commandLock.runExclusive(async () => {
+            const term = this.persistentState.getCurrentTerm();
+            const idx = await this.logManager.appendConfigEntry(newConfig, term);
+            this.configManager.applyConfigEntry(newConfig);
+
+            if (!this.stateMachine.isLeader() || this.persistentState.getCurrentTerm() !== term) {
+                this.logger.warn(`Node ${this.config.nodeId} is no longer the leader or term has changed after appending config entry. Current term: ${this.persistentState.getCurrentTerm()}, expected term: ${term}`);
+                return false;
+            }
+
+            capturedIndex = idx;
+            capturedTerm = term;
+
+            return true;
+        });
+
+        if(!appendResult || capturedIndex === null || capturedTerm === null) {
+            return false;
+        }
+
+        await this.triggerReplication();
+
+        const committed = await this.waitForCommit(capturedIndex, 5000, capturedTerm);
+
+        return committed;
     }
 
     private async waitForCommit(index: number, timeoutMs: number, term: number): Promise<boolean> {
@@ -532,7 +702,8 @@ export class RaftNode implements RaftNodeInterface {
         await this.snapshotManager.saveSnapshot({
             lastIncludedIndex: snapshotIndex,
             lastIncludedTerm: snapshotTerm,
-            data: data
+            data: data,
+            config: this.configManager.getCommittedConfig()
         });
 
         await this.logManager.discardEntriesUpTo(snapshotIndex, snapshotTerm);

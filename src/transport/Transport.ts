@@ -12,4 +12,6 @@ export interface Transport {
     isStarted(): boolean;
     send(peerId: NodeId, message: RPCMessage): Promise<RPCMessage>;
     onMessage(handler: MessageHandler): void;
+    addPeer?(peerId: NodeId, address: string): Promise<void>;
+    removePeer?(peerId: NodeId): void;
 }
