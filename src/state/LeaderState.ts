@@ -109,9 +109,7 @@ export class LeaderState implements LeaderStateInterface {
         const voterMatchIndices: number[] = [leaderLastIdx];
 
         for (const voter of voters) {
-            if(this.matchIndex.has(voter)) {
-                voterMatchIndices.push(this.matchIndex.get(voter)!);
-            }
+            voterMatchIndices.push(this.matchIndex.get(voter) ?? 0);
         }
 
         const majorityCount = Math.floor((voters.length + 1) / 2) + 1;

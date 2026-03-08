@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { LeaderState } from "./LeaderState";
 import { LeaderStateError } from "../util/Error";
-import { get } from "node:http";
 
 describe('LeaderState.ts, LeaderState', () => {
     const peers = ['node1', 'node2', 'node3'];
@@ -132,7 +131,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getTermAtIndex: vi.fn().mockResolvedValue(2)
         } as any;
 
-        const commitIdx = await leaderState.calculateCommitIndex(2, logManager);
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, peers);
 
         expect(commitIdx).toBe(5);
     });
@@ -149,7 +148,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getTermAtIndex: vi.fn().mockResolvedValue(1)
         } as any;
 
-        const commitIdx = await leaderState.calculateCommitIndex(2, logManager);
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, peers);
 
         expect(commitIdx).toBe(0);
     });
@@ -166,7 +165,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getTermAtIndex: vi.fn().mockResolvedValue(2)
         } as any;
 
-        const commitIdx = await leaderState.calculateCommitIndex(2, logManager);
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, peers);
 
         expect(commitIdx).toBe(0);
     });
@@ -183,7 +182,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getTermAtIndex: vi.fn().mockResolvedValue(2)
         } as any;
 
-        const commitIdx = await leaderState.calculateCommitIndex(2, logManager);
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, peers);
 
         expect(commitIdx).toBe(4);
     });
@@ -196,7 +195,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getTermAtIndex: vi.fn().mockResolvedValue(2)
         } as any;
 
-        const commitIdx = await leaderState.calculateCommitIndex(2, logManager);
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, []);
 
         expect(commitIdx).toBe(5);
     });
@@ -213,7 +212,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getTermAtIndex: vi.fn().mockResolvedValue(2)
         } as any;
 
-        const commitIdx = await leaderState.calculateCommitIndex(2, logManager);
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, peers);
 
         expect(commitIdx).toBe(0);
     });
@@ -223,7 +222,7 @@ describe('LeaderState.ts, LeaderState', () => {
         leaderState.updateMatchIndex('node1', 5);
         leaderState.updateMatchIndex('node2', 5);
         leaderState.updateMatchIndex('node3', 2);
-        expect(leaderState.isReplicatedOnMajority(5)).toBe(true);
+        expect(leaderState.isReplicatedOnMajority(5, peers)).toBe(true);
     });
 
     it('should determine if index is not replicated on majority', () => {
@@ -231,7 +230,7 @@ describe('LeaderState.ts, LeaderState', () => {
         leaderState.updateMatchIndex('node1', 5);
         leaderState.updateMatchIndex('node2', 4);
         leaderState.updateMatchIndex('node3', 2);
-        expect(leaderState.isReplicatedOnMajority(5)).toBe(false);
+        expect(leaderState.isReplicatedOnMajority(5, peers)).toBe(false);
     });
 
     it('should get majority match index correctly', () => {
@@ -239,7 +238,7 @@ describe('LeaderState.ts, LeaderState', () => {
         leaderState.updateMatchIndex('node1', 5);
         leaderState.updateMatchIndex('node2', 4);
         leaderState.updateMatchIndex('node3', 2);
-        expect(leaderState.getMajorityMatchIndex(5)).toBe(4);
+        expect(leaderState.getMajorityMatchIndex(5, peers)).toBe(4);
     });
 
     it('should get majority match index correctly when some nodes are at same index', () => {
@@ -247,7 +246,7 @@ describe('LeaderState.ts, LeaderState', () => {
         leaderState.updateMatchIndex('node1', 5);
         leaderState.updateMatchIndex('node2', 5);
         leaderState.updateMatchIndex('node3', 2);
-        expect(leaderState.getMajorityMatchIndex(5)).toBe(5);
+        expect(leaderState.getMajorityMatchIndex(5, peers)).toBe(5);
     });
 
     it('should get majority match index correctly when all nodes are behind', () => {
@@ -255,12 +254,12 @@ describe('LeaderState.ts, LeaderState', () => {
         leaderState.updateMatchIndex('node1', 3);
         leaderState.updateMatchIndex('node2', 2);
         leaderState.updateMatchIndex('node3', 1);
-        expect(leaderState.getMajorityMatchIndex(5)).toBe(2);
+        expect(leaderState.getMajorityMatchIndex(5, peers)).toBe(2);
     });
     
     it('should get majority match index correctly in single node cluster', () => {
         const leaderState = new LeaderState([], lastLogIndex);
-        expect(leaderState.getMajorityMatchIndex(5)).toBe(5);
+        expect(leaderState.getMajorityMatchIndex(5, [])).toBe(5);
     });
 
     it('should return if an index is fully replicated on every node', () => {
@@ -343,7 +342,7 @@ describe('LeaderState.ts, LeaderState', () => {
     it('should throw if matchIndex size is inconsistent with peers size in getMajorityMatchIndex', () => {
         const leaderState = new LeaderState(peers, lastLogIndex);
         (leaderState as any)['matchIndex'].clear();
-        expect(() => leaderState.getMajorityMatchIndex(5)).toThrow(LeaderStateError);
+        expect(() => leaderState.getMajorityMatchIndex(5, peers)).toThrow(LeaderStateError);
     });
 
     it('should set next index to conflict index when conflict term is 0', async () => {
@@ -385,11 +384,7 @@ describe('LeaderState.ts, LeaderState', () => {
             getLastIndex: vi.fn(),
             getTermAtIndex: vi.fn()
         } as any;
-        const getNextIndexSpy = vi.spyOn(leaderState, 'getNextIndex')
         const setNextIndexSpy = vi.spyOn(leaderState, 'setNextIndex')
-
-        getNextIndexSpy.mockReturnValueOnce(0);
-        getNextIndexSpy.mockRestore();
 
         vi.spyOn(leaderState, 'getNextIndex').mockReturnValueOnce(0);
 
@@ -433,5 +428,99 @@ describe('LeaderState.ts, LeaderState', () => {
         await leaderState.updateNextIndexWithConflict('node1', 3, 2, logManager);
         expect(leaderState.getNextIndex('node1')).toBe(3);
         expect(logManager.getTermAtIndex).toHaveBeenCalledTimes(1);
+    });
+
+    it('should commit based only on provided voters, ignorign non-voting peers', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 5);
+        leaderState.updateMatchIndex('node2', 5);
+        leaderState.updateMatchIndex('node3', 2);
+
+        const logManager = {
+            getLastIndex: vi.fn().mockReturnValue(5),
+            getTermAtIndex: vi.fn().mockResolvedValue(2)
+        } as any;
+
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, ['node1', 'node2']);
+
+        expect(commitIdx).toBe(5);
+    });
+
+    it('should not commit if majority not reached with reduced voter set', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 2);
+        leaderState.updateMatchIndex('node2', 2);
+        leaderState.updateMatchIndex('node3', 5);
+
+        const logManager = {
+            getLastIndex: vi.fn().mockReturnValue(5),
+            getTermAtIndex: vi.fn().mockResolvedValue(2)
+        } as any;
+
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, ['node1', 'node2']);
+
+        expect(commitIdx).toBe(2);
+    });
+
+    it('should check majority replication using only provided voters', () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 5);
+        leaderState.updateMatchIndex('node2', 5);
+        leaderState.updateMatchIndex('node3', 2);
+        expect(leaderState.isReplicatedOnMajority(5, ['node1', 'node3'])).toBe(true);
+    });
+
+    it('should not count non-voters toward majority in isReplicatedOnMajority', () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 2);
+        leaderState.updateMatchIndex('node2', 2);
+        leaderState.updateMatchIndex('node3', 5);
+        expect(leaderState.isReplicatedOnMajority(5, ['node1', 'node2'])).toBe(false);
+    });
+
+    it('should compute majority match index using only provided voters', () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 5);
+        leaderState.updateMatchIndex('node2', 4);
+        leaderState.updateMatchIndex('node3', 2);
+        expect(leaderState.getMajorityMatchIndex(5, ['node1', 'node3'])).toBe(5);
+    });
+
+    it('should not include non-voters in majority match index calculation', () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 2);
+        leaderState.updateMatchIndex('node2', 2);
+        leaderState.updateMatchIndex('node3', 5);
+        expect(leaderState.getMajorityMatchIndex(5, ['node1', 'node2'])).toBe(2);
+    });
+
+    it('should treat newly added voter with no match index as having match index 0 in commit index calculation', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 5);
+        leaderState.updateMatchIndex('node2', 5);
+        leaderState.updateMatchIndex('node3', 5);
+
+        const logManager = {
+            getLastIndex: vi.fn().mockReturnValue(5),
+            getTermAtIndex: vi.fn().mockResolvedValue(2)
+        } as any;
+
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, ['node1', 'node2', 'node3', 'node4']);
+        expect(commitIdx).toBe(5);
+    });
+
+    it('should not commit if newly added voter with no match index prevents majority', async () => {
+        const leaderState = new LeaderState(peers, lastLogIndex);
+        leaderState.updateMatchIndex('node1', 5);
+        leaderState.updateMatchIndex('node2', 5);
+        leaderState.updateMatchIndex('node3', 5);
+
+        const logManager = {
+            getLastIndex: vi.fn().mockReturnValue(5),
+            getTermAtIndex: vi.fn().mockResolvedValue(2)
+        } as any;
+
+        const commitIdx = await leaderState.calculateCommitIndex(2, logManager, ['node1', 'node2', 'node3', 'node4', 'node5', 'node6', 'node7']);
+        expect(commitIdx).toBe(0);
     });
 });

@@ -2,11 +2,26 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { StateMachine, RaftState } from './StateMachine';
 import { RaftError } from '../util/Error';
 import { AsyncLock } from '../lock/AsyncLock';
+import { ConfigManager } from '../config/ConfigManager';
+import { getQuorumSize } from '../config/ClusterConfig';
+import { LogEntry, LogEntryType } from '../log/LogEntry';
 
 describe('StateMachine.ts, StateMachine', () => {
 
     const nodeId = 'node1';
     const peers = ['node2', 'node3'];
+    const allVoters = [nodeId, ...peers];
+    const defaultConfig = { voters: allVoters, learners: [] };
+
+    let configManager: {
+        isVoter: ReturnType<typeof vi.fn>,
+        isLearner: ReturnType<typeof vi.fn>,
+        getQuorumSize: ReturnType<typeof vi.fn>,
+        getAllPeers: ReturnType<typeof vi.fn>,
+        getVoters: ReturnType<typeof vi.fn>,
+        applyConfigEntry: ReturnType<typeof vi.fn>,
+        commitConfig: ReturnType<typeof vi.fn>,
+    }
 
     let persistentState: { 
         getCurrentTerm: ReturnType<typeof vi.fn>,
@@ -31,6 +46,7 @@ describe('StateMachine.ts, StateMachine', () => {
         calculateCommitIndex: ReturnType<typeof vi.fn>,
         discardEntriesUpTo: ReturnType<typeof vi.fn>,
         resetToSnapshot: ReturnType<typeof vi.fn>,
+        getEntry: ReturnType<typeof vi.fn>,
     };
 
     let snapshotManager: {
@@ -90,6 +106,17 @@ describe('StateMachine.ts, StateMachine', () => {
     };
 
     beforeEach(() => {
+
+        configManager = {
+            isVoter: vi.fn().mockReturnValue(true),
+            isLearner: vi.fn().mockReturnValue(false),
+            getQuorumSize: vi.fn().mockReturnValue(2),
+            getAllPeers: vi.fn().mockReturnValue(peers),
+            getVoters: vi.fn().mockReturnValue(allVoters),
+            applyConfigEntry: vi.fn(),
+            commitConfig: vi.fn().mockResolvedValue(undefined),
+        };
+
         persistentState = {
             getCurrentTerm: vi.fn().mockReturnValue(1),
             getVotedFor: vi.fn().mockReturnValue(null),
@@ -113,6 +140,7 @@ describe('StateMachine.ts, StateMachine', () => {
             calculateCommitIndex: vi.fn().mockReturnValue(0),
             discardEntriesUpTo: vi.fn().mockResolvedValue(undefined),
             resetToSnapshot: vi.fn().mockResolvedValue(undefined),
+            getEntry: vi.fn().mockReturnValue(null),
         };
 
         snapshotManager = {
@@ -155,7 +183,7 @@ describe('StateMachine.ts, StateMachine', () => {
 
         stateMachine = new StateMachine(
             nodeId,
-            peers,
+            configManager as any,
             config as any,
             persistentState as any,
             volatileState as any,
@@ -259,9 +287,18 @@ describe('StateMachine.ts, StateMachine', () => {
     });
 
     it('should become leader when majority votes received if there are no peers', async () => {
+
+        const emptyConfigManager = {
+            ...ConfigManager,
+            isVoter: vi.fn().mockReturnValue(true),
+            getQuorumSize: vi.fn().mockReturnValue(1),
+            getAllPeers: vi.fn().mockReturnValue([]),
+            getVoters: vi.fn().mockReturnValue([nodeId]),
+        }
+
         const emptyPeersStateMachine = new StateMachine(
             nodeId,
-            [],
+            emptyConfigManager as any,
             config as any,
             persistentState as any,
             volatileState as any,
@@ -388,7 +425,7 @@ describe('StateMachine.ts, StateMachine', () => {
     });
 
     it('should append entries when log matches', async () => {
-        const entries = [{ index: 1, term: 1, command: { type: 'set', payload: { key: 'x', value: 10 } } }];
+        const entries = [{ index: 1, term: 1, type: LogEntryType.COMMAND, command: { type: 'set', payload: { key: 'x', value: 10 } } }];
         const response = await stateMachine.handleAppendEntries('node2', { ...baseRequest2, entries });
         expect(logManager.appendEntriesFrom).toHaveBeenCalledWith(0, entries);
         expect(response).toEqual({ term: 1, success: true, matchIndex: 1 });
@@ -401,7 +438,7 @@ describe('StateMachine.ts, StateMachine', () => {
 
     it('should update commit index when leaderCommit is higher than current commit index', async () => {
         volatileState.getCommitIndex.mockReturnValue(0);
-        const response = await stateMachine.handleAppendEntries('node2', { ...baseRequest2, prevLogIndex: 2, entries: [{ index: 3, term: 1, command: { type: 'set', payload: { key: 'x', value: 10 } } }], leaderCommit: 3 });
+        const response = await stateMachine.handleAppendEntries('node2', { ...baseRequest2, prevLogIndex: 2, entries: [{ index: 3, term: 1, type: LogEntryType.COMMAND, command: { type: 'set', payload: { key: 'x', value: 10 } } }], leaderCommit: 3 });
         expect(volatileState.setCommitIndex).toHaveBeenCalledWith(3);
         expect(onCommitIndexAdvanced).toHaveBeenCalledWith(3);
     });
@@ -415,12 +452,12 @@ describe('StateMachine.ts, StateMachine', () => {
 
     it('should clamp new commit index to last new entry index', async () => {
         volatileState.getCommitIndex.mockReturnValue(0);
-        await stateMachine.handleAppendEntries('node2', { ...baseRequest2, prevLogIndex: 1, entries: [{ index: 2, term: 1, command: { type: 'set', payload: { key: 'x', value: 10 } } }], leaderCommit: 10 });
+        await stateMachine.handleAppendEntries('node2', { ...baseRequest2, prevLogIndex: 1, entries: [{ index: 2, term: 1, type: LogEntryType.COMMAND, command: { type: 'set', payload: { key: 'x', value: 10 } } }], leaderCommit: 10 });
         expect(volatileState.setCommitIndex).toHaveBeenCalledWith(2);
     });
 
     it('should return correct matchindex on succes', async () => {
-        const response = await stateMachine.handleAppendEntries('node2', { ...baseRequest2, prevLogIndex: 3, entries: [{ index: 4, term: 1, command: { type: 'set', payload: { key: 'x', value: 10 } } }] });
+        const response = await stateMachine.handleAppendEntries('node2', { ...baseRequest2, prevLogIndex: 3, entries: [{ index: 4, term: 1, type: LogEntryType.COMMAND, command: { type: 'set', payload: { key: 'x', value: 10 } } }] });
         expect(response).toEqual({ term: 1, success: true, matchIndex: 4 });
     });
 
@@ -542,7 +579,7 @@ describe('StateMachine.ts, StateMachine', () => {
             leaderId: 'node2',
             prevLogIndex: 0,
             prevLogTerm: 0,
-            entries: [{ index: 1, term: 1, command: { type: 'set', payload: { key: 'x', value: 10 } } }],
+            entries: [{ index: 1, term: 1, type: LogEntryType.COMMAND, command: { type: 'set', payload: { key: 'x', value: 10 } } }],
             leaderCommit: 1
         });
         expect(onCommitIndexAdvanced).toHaveBeenCalledWith(1);
@@ -811,9 +848,18 @@ describe('StateMachine.ts, StateMachine', () => {
 
     it('should not become leader when vote is granted but majority is not achieved', async () => {
         const largePeers = ['node2', 'node3', 'node4'];
+
+        const largeConfigManager = {
+            ...ConfigManager,
+            isVoter: vi.fn().mockReturnValue(true),
+            getQuorumSize: vi.fn().mockReturnValue(3),
+            getAllPeers: vi.fn().mockReturnValue(largePeers),
+            getVoters: vi.fn().mockReturnValue(['node1', ...largePeers]),
+        };
+
         const largeMachine = new StateMachine(
             nodeId,
-            largePeers,
+            largeConfigManager as any,
             config as any,
             persistentState as any,
             volatileState as any,
@@ -849,7 +895,8 @@ describe('StateMachine.ts, StateMachine', () => {
         await stateMachine.handleInstallSnapshot('node2', {
             term: 5, leaderId: 'node2',
             lastIncludedIndex: 5, lastIncludedTerm: 1,
-            data: Buffer.from('snap')
+            data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         expect(persistentState.updateTermAndVote).toHaveBeenCalledWith(5, null);
@@ -867,7 +914,8 @@ describe('StateMachine.ts, StateMachine', () => {
             leaderId: 'node2',
             lastIncludedIndex: 10,
             lastIncludedTerm: 1,
-            data: Buffer.from('snapshot')
+            data: Buffer.from('snapshot'),
+            config: { voters: [], learners: [] },
         });
 
         expect(resetSpy).toHaveBeenCalledWith(10, 1);
@@ -882,6 +930,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 3,
             lastIncludedTerm: 5,
             data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         expect(response).toEqual({ term: 10, success: false });
@@ -896,6 +945,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from('snapshot-data'),
+            config: { voters: [], learners: [] },
         };
         snapshotManager.loadSnapshot.mockResolvedValue(fakeSnapshot);
 
@@ -936,6 +986,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         (rpcHandler as any).sendInstallSnapshot = vi.fn().mockResolvedValue({
@@ -956,6 +1007,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         (rpcHandler as any).sendInstallSnapshot = vi.fn().mockResolvedValue({
@@ -978,6 +1030,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         (rpcHandler as any).sendInstallSnapshot = vi.fn().mockImplementation(async () => {
@@ -1000,6 +1053,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         (rpcHandler as any).sendInstallSnapshot = vi
@@ -1021,6 +1075,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from('snap'),
+            config: { voters: [], learners: [] },
         });
 
         (rpcHandler as any).sendInstallSnapshot = vi
@@ -1062,6 +1117,7 @@ describe('StateMachine.ts, StateMachine', () => {
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
             data: Buffer.from("snap"),
+            config: { voters: [], learners: [] }
         });
 
         (rpcHandler as any).sendInstallSnapshot = vi.fn().mockResolvedValue({
@@ -1081,5 +1137,137 @@ describe('StateMachine.ts, StateMachine', () => {
             (args: unknown[]) => typeof args[0] === "string" && args[0].includes("successfully sent snapshot"),
         );
         expect(successLog).toBe(false);
+    });
+
+    it('should not start election when node is not a voter', async () => {
+        configManager.isVoter.mockReturnValue(false);
+
+        let captureCallback: (() => void) | null = null;
+
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            captureCallback = callback;
+        });
+
+        await stateMachine.becomeFollower(1, null);
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect(rpcHandler.sendRequestVote).not.toHaveBeenCalled();
+    });
+
+    it('should not add self to votes when node is not a voter during candidate transition', async () => {
+        configManager.isVoter.mockReturnValue(false);
+        configManager.getQuorumSize.mockReturnValue(2);
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: true });
+
+        await stateMachine.becomeCandidate();
+
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+    });
+
+    it('should step down after advancing commit index when node is no longer a voter', async () => {
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        const leaderState = (stateMachine as any)['leaderState'];
+        vi.spyOn(leaderState, 'calculateCommitIndex').mockResolvedValue(3);
+        volatileState.getCommitIndex.mockReturnValue(0);
+
+        configManager.isVoter.mockReturnValue(false);
+
+        await (stateMachine as any)['tryAdvanceCommitIndex']();
+
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+    });
+
+    it('should apply config entry from appendEntries when entry type is CONFIG', async () => {
+        const configEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.CONFIG,
+            config: defaultConfig
+        };
+
+        await stateMachine.handleAppendEntries('node2', {...baseRequest2, entries: [configEntry] });
+
+        expect(configManager.applyConfigEntry).toHaveBeenCalledWith(defaultConfig);
+    });
+
+    it('should commit config entry when leaderCommit advances past a CONFIG entry', async () => {
+        const configEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.CONFIG,
+            config: defaultConfig
+        };
+
+        logManager.getEntry.mockReturnValue(configEntry);
+        volatileState.getCommitIndex.mockReturnValue(0);
+
+        await stateMachine.handleAppendEntries('node2', {...baseRequest2, entries: [configEntry], leaderCommit: 1, prevLogIndex: 0 });
+
+        expect(configManager.applyConfigEntry).toHaveBeenCalledWith(defaultConfig);
+    });
+
+    it('should commit config entry when tryAdvanceCommitIndex passes a CONFIG log entry', async () => {
+        await stateMachine.becomeLeader();
+
+        await vi.waitFor(() => {
+            expect(rpcHandler.sendAppendEntries).toHaveBeenCalledTimes(peers.length);
+        });
+
+        const configEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.CONFIG,
+            config: defaultConfig
+        };
+
+        logManager.getEntry.mockReturnValue(configEntry);
+        volatileState.getCommitIndex.mockReturnValue(0);
+
+        const leaderState = (stateMachine as any)['leaderState'];
+        vi.spyOn(leaderState, 'calculateCommitIndex').mockResolvedValue(1);
+        volatileState.getCommitIndex.mockReturnValue(0);
+
+        await (stateMachine as any)['tryAdvanceCommitIndex']();
+
+        expect(configManager.commitConfig).toHaveBeenCalledWith(defaultConfig);
+    });
+
+    it('should apply and commit config form InstallSnapshot when voters are non-empty', async () => {
+        logManager.getLastIndex.mockReturnValue(10);
+
+        await stateMachine.handleInstallSnapshot('node2', {
+            term: 1,
+            leaderId: 'node2',
+            lastIncludedIndex: 5,
+            lastIncludedTerm: 1,
+            data: Buffer.from('snap'),
+            config: defaultConfig
+        });
+
+        expect(configManager.applyConfigEntry).toHaveBeenCalledWith(defaultConfig);
+        expect(configManager.commitConfig).toHaveBeenCalledWith(defaultConfig);
+    });
+
+    it('should not apply config from InstallSnapshot when voters list is empty', async () => {
+        logManager.getLastIndex.mockReturnValue(10);
+
+        await stateMachine.handleInstallSnapshot('node2', {
+            term: 1,
+            leaderId: 'node2',
+            lastIncludedIndex: 5,
+            lastIncludedTerm: 1,
+            data: Buffer.from('snap'),
+            config: { voters: [], learners: [] }
+        });
+
+        expect(configManager.applyConfigEntry).not.toHaveBeenCalled();
+        expect(configManager.commitConfig).not.toHaveBeenCalled();
     });
 });
