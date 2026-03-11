@@ -28,7 +28,9 @@ message Command {
 message LogEntry {
     int32   term    = 1;
     int32   index   = 2;
-    Command command = 3;
+    string  type    = 3;
+    Command command = 4;
+    string config   = 5;
 }
 
 message AppendEntriesRequest {
@@ -57,6 +59,7 @@ message InstallSnapshotRequest {
     int32 lastIncludedIndex = 3;
     int32 lastIncludedTerm = 4;
     bytes data = 5;
+    string config = 6;
 }
 
 message  InstallSnapshotResponse {

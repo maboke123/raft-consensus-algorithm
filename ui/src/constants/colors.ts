@@ -3,8 +3,10 @@ export const roleColors = {
     Follower : "#0366d6",
     Candidate : "#d73a49",
     Crashed : "#8b0000",
+    Recover: "#2ea043",
     TakingSnapshot: "#f97316",
     InstallingSnapshot: "#8964c9",
+    Learner: "#e3b341"
 };
 
 export const messageColors = {

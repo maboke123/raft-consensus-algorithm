@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { StorageCodec } from "./Storage";
+import { LogEntry, LogEntryType } from "../log/LogEntry";
 
 describe('Storage.ts, StorageCodec', () => {
     it('should encode and decode numbers', () => {
@@ -112,5 +113,91 @@ describe('Storage.ts, StorageCodec', () => {
     it('should throw when decoding invalid JSON', () => {
         const invalidBuffer = Buffer.from("Not a valid JSON", StorageCodec.encoding);
         expect(() => StorageCodec.decodeJSON(invalidBuffer)).toThrow("Failed to decode JSON");
+    });
+
+    it('should serialize a COMMAND log entry correctly', () => {
+        const logEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.COMMAND,
+            command: { type: "set", payload: { key: "x", value: 42 } }
+        };
+        const serialized = StorageCodec.serializeLogEntry(logEntry) as any;
+        expect(serialized.index).toBe(1);
+        expect(serialized.term).toBe(1);
+        expect(serialized.type).toBe(LogEntryType.COMMAND);
+        expect(serialized.command.type).toBe("set");
+        expect(Buffer.isBuffer(serialized.command.payload)).toBe(true);
+    });
+
+    it('should serialize a CONFIG entry correctly', () => {
+        const logEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.CONFIG,
+            config: { voters: ['node1', 'node2'], learners: [] }
+        };
+        const serialized = StorageCodec.serializeLogEntry(logEntry) as any;
+        expect(serialized.index).toBe(1);
+        expect(serialized.term).toBe(1);
+        expect(serialized.type).toBe(LogEntryType.CONFIG);
+        expect(JSON.parse(serialized.config)).toEqual({ voters: ['node1', 'node2'], learners: [] });
+    });
+
+    it('should deserialize a COMMAND log entry correctly', () => {
+        const logEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.COMMAND,
+            command: { type: "set", payload: { key: "x", value: 42 } }
+        };
+        const serialized = StorageCodec.serializeLogEntry(logEntry);
+        const deserialized = StorageCodec.deserializeLogEntry(serialized);
+        expect(deserialized).toEqual(logEntry);
+    });
+
+    it('should deserialize a CONFIG entry correctly', () => {
+        const logEntry: LogEntry = {
+            index: 1,
+            term: 1,
+            type: LogEntryType.CONFIG,
+            config: { voters: ['node1', 'node2'], learners: [] }
+        };
+        const serialized = StorageCodec.serializeLogEntry(logEntry);
+        const deserialized = StorageCodec.deserializeLogEntry(serialized);
+        expect(deserialized).toEqual(logEntry);
+    });
+
+    it('should deserialize a CONFIG log entry with config as a string', () => {
+        const raw = {
+            term: 1,
+            index: 1,
+            type: LogEntryType.CONFIG,
+            config: JSON.stringify({ voters: ['node1', 'node2'], learners: [] })
+        };
+
+        const deserialized = StorageCodec.deserializeLogEntry(raw);
+        expect(deserialized).toEqual({
+            term: 1,
+            index: 1,
+            type: LogEntryType.CONFIG,
+            config: { voters: ['node1', 'node2'], learners: [] }
+        });
+    });
+
+    it('should deserialize a CONFIG log entry with config as object', () => {
+        const raw = {
+            term: 1,
+            index: 1,
+            type: LogEntryType.CONFIG,
+            config: { voters: ['node1', 'node2'], learners: [] }
+        };
+        const deserialized = StorageCodec.deserializeLogEntry(raw);
+        expect(deserialized).toEqual({
+            term: 1,
+            index: 1,
+            type: LogEntryType.CONFIG,
+            config: { voters: ['node1', 'node2'], learners: [] }
+        });
     });
 });

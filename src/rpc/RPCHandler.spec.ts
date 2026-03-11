@@ -49,6 +49,7 @@ describe('RPCHandler.ts, RPCHandler', () => {
         lastIncludedIndex: 0,
         lastIncludedTerm: 0,
         data: Buffer.from('snapshot data'),
+        config: { voters: [], learners: [] }
     };
 
     const installSnapshotResponse = {

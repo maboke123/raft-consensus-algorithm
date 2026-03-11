@@ -1,4 +1,4 @@
-import { SnapshotManager, SNAPSHOT_DATA_KEY, SNAPSHOT_INDEX_KEY, SNAPSHOT_TERM_KEY } from './SnapshotManager';
+import { SnapshotManager, SNAPSHOT_DATA_KEY, SNAPSHOT_INDEX_KEY, SNAPSHOT_TERM_KEY, SNAPSHOT_LEARNERS_KEY, SNAPSHOT_VOTERS_KEY } from './SnapshotManager';
 import { Storage, StorageCodec } from '../storage/Storage';
 import { StorageError } from '../util/Error';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -10,7 +10,8 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
     const snapshot = {
         lastIncludedIndex: 10,
         lastIncludedTerm: 3,
-        data: Buffer.from("test data")
+        data: Buffer.from("test data"),
+        config: { voters: ['node1', 'node2'], learners: []}
     };
 
     beforeEach(() => {
@@ -115,6 +116,16 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
                 type: "set",
                 key: SNAPSHOT_DATA_KEY,
                 value: snapshot.data
+            },
+            {
+                type: "set",
+                key: SNAPSHOT_VOTERS_KEY,
+                value: StorageCodec.encodeJSON(snapshot.config.voters)
+            },
+            {
+                type: "set",
+                key: SNAPSHOT_LEARNERS_KEY,
+                value: StorageCodec.encodeJSON(snapshot.config.learners)
             }
         ]);
     });
@@ -134,7 +145,8 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
         const newSnapshot = {
             lastIncludedIndex: 20,
             lastIncludedTerm: 5,
-            data: Buffer.from("new test data")
+            data: Buffer.from("new test data"),
+            config: { voters: ['node1', 'node2'], learners: []}
         };
 
         await snapshotManager.saveSnapshot(newSnapshot);
@@ -160,6 +172,9 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
             if (key === SNAPSHOT_TERM_KEY) {
                 return StorageCodec.encodeNumber(3);
             }
+            if (key === SNAPSHOT_DATA_KEY) {
+                return Buffer.from('test data');
+            }
             return null;
         });
 
@@ -179,6 +194,12 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
             if (key === SNAPSHOT_DATA_KEY) {
                 return Buffer.from("test data");
             }
+            if (key === SNAPSHOT_VOTERS_KEY) {
+                return StorageCodec.encodeJSON(['node1', 'node2']);
+            }
+            if (key === SNAPSHOT_LEARNERS_KEY) {
+                return StorageCodec.encodeJSON([]);
+            }
             return null;
         });
 
@@ -187,7 +208,8 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
         expect(result).toEqual({
             lastIncludedIndex: 10,
             lastIncludedTerm: 3,
-            data: Buffer.from("test data")
+            data: Buffer.from("test data"),
+            config: { voters: ['node1', 'node2'], learners: []}
         });
     });
 
@@ -196,14 +218,20 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
 
         await snapshotManager.initialize();
 
-        vi.mocked(storage.get).mockResolvedValue(data);
+        vi.mocked(storage.get).mockImplementation(async (key) => {
+            if (key === SNAPSHOT_DATA_KEY) return data;
+            if (key === SNAPSHOT_VOTERS_KEY) return StorageCodec.encodeJSON(snapshot.config.voters);
+            if (key === SNAPSHOT_LEARNERS_KEY) return StorageCodec.encodeJSON(snapshot.config.learners);
+            return null;
+        });
 
         await snapshotManager.saveSnapshot(snapshot);
         const result = await snapshotManager.loadSnapshot();
         expect(result).toEqual({
             lastIncludedIndex: snapshot.lastIncludedIndex,
             lastIncludedTerm: snapshot.lastIncludedTerm,
-            data
+            data,
+            config: snapshot.config
         });
     });
 
@@ -258,7 +286,8 @@ describe('SnapshotManager.ts, SnapshotManager', () => {
         const newSnapshot = {
             lastIncludedIndex: 20,
             lastIncludedTerm: 5,
-            data: Buffer.from("new test data")
+            data: Buffer.from("new test data"),
+            config: { voters: ['node1', 'node2'], learners: []}
         };
         await snapshotManager.saveSnapshot(newSnapshot);
         expect(snapshotManager.getSnapshotMetadata()).toEqual({ lastIncludedIndex: newSnapshot.lastIncludedIndex, lastIncludedTerm: newSnapshot.lastIncludedTerm });

@@ -15,9 +15,9 @@ export interface LeaderStateInterface {
     decrementNextIndex(peerId: NodeId): void;
     getMatchIndex(peerId: NodeId): number;
     updateMatchIndex(peerId: NodeId, index: number): void;
-    calculateCommitIndex(currentTerm: number, logManager: LogManager): Promise<number>;
-    isReplicatedOnMajority(index: number): boolean;
-    getMajorityMatchIndex(leaderLastIdx: number): number;
+    calculateCommitIndex(currentTerm: number, logManager: LogManager, voters: NodeId[]): Promise<number>;
+    isReplicatedOnMajority(index: number, voters: NodeId[]): boolean;
+    getMajorityMatchIndex(leaderLastIdx: number, voters: NodeId[]): number;
     isFullyReplicated(index: number): boolean;
     getPeersBehind(targetIndex: number): NodeId[];
     snapshot(): ReadonlyMap<NodeId, LeaderStateSnapshot>;
@@ -103,62 +103,67 @@ export class LeaderState implements LeaderStateInterface {
         this.nextIndex.set(peerId, index + 1);
     }
 
-    async calculateCommitIndex(currentTerm: number, logManager: LogManager): Promise<number> {
+    async calculateCommitIndex(currentTerm: number, logManager: LogManager, voters: NodeId[]): Promise<number> {
         const leaderLastIdx = logManager.getLastIndex();
-        const candidateIndices: number[] = Array.from(this.matchIndex.values());
-        candidateIndices.push(leaderLastIdx);
 
-        const sorted = [...new Set(candidateIndices)]
+        const voterMatchIndices: number[] = [leaderLastIdx];
+
+        for (const voter of voters) {
+            voterMatchIndices.push(this.matchIndex.get(voter) ?? 0);
+        }
+
+        const majorityCount = Math.floor((voters.length + 1) / 2) + 1;
+
+        const sortedIndices = [...new Set(voterMatchIndices)]
             .filter(idx => idx > 0)
             .sort((a, b) => b - a);
 
-        const clusterSize = this.peers.length + 1;
-        const majorityCount = Math.floor(clusterSize / 2) + 1;
-
-        for (const candidateIdx of sorted) {
-            const termAtIdx = await logManager.getTermAtIndex(candidateIdx);
-
+        for (const idx of sortedIndices) {
+            const termAtIdx = await logManager.getTermAtIndex(idx);
+            
             if (termAtIdx !== currentTerm) {
                 continue;
             }
 
-            const replicatedCount = 1 + Array.from(this.matchIndex.values())
-                .filter(matchIdx => matchIdx >= candidateIdx)
-                .length;
-            
+            const replicatedCount = voterMatchIndices.filter(matchIdx => matchIdx >= idx).length;
+
             if (replicatedCount >= majorityCount) {
-                return candidateIdx;
+                return idx;
             }
         }
 
         return 0;
     }
 
-    isReplicatedOnMajority(index: number): boolean {
-        const clusterSize = this.peers.length + 1;
-        const majorityCount = Math.floor(clusterSize / 2) + 1;
+    isReplicatedOnMajority(index: number, voters: NodeId[]): boolean {
+        const majorityCount = Math.floor((voters.length + 1) / 2) + 1;
 
-        const replicatedOnPeers = 1 + Array.from(this.matchIndex.values())
-            .filter(matchIdx => matchIdx >= index)
-            .length;
+        let count = 1;
+        for (const voter of voters) {
+            if (this.matchIndex.has(voter) && this.matchIndex.get(voter)! >= index) {
+                count++;
+            }
+        }
 
-        return replicatedOnPeers >= majorityCount;
+        return count >= majorityCount;
     }
 
-    getMajorityMatchIndex(leaderLastIdx: number): number {
-        const clusterSize = this.peers.length + 1;
-        const majorityCount = Math.floor(clusterSize / 2) + 1;
+    getMajorityMatchIndex(leaderLastIdx: number, voters: NodeId[]): number {
+        const majorityCount = Math.floor((voters.length + 1) / 2) + 1;
 
-        const values: number[] = [
-            ...Array.from(this.matchIndex.values()),
-            leaderLastIdx
-        ];
+        const values: number[] = [leaderLastIdx];
+
+        for (const voter of voters) {
+            if (this.matchIndex.has(voter)) {
+                values.push(this.matchIndex.get(voter)!);
+            }
+        }
 
         values.sort((a, b) => b - a);
 
         const result = values[majorityCount - 1]
         if (result === undefined) {
-            throw new LeaderStateError(`Not enough match indices to determine majority. Cluster size: ${clusterSize}`);
+            throw new LeaderStateError(`Not enough match indices to determine majority. Cluster size: ${voters.length + 1}, majority count: ${majorityCount}`);
         }
         return result;
     }
@@ -211,6 +216,16 @@ export class LeaderState implements LeaderStateInterface {
         if (newNextIndex < 1) {
             this.setNextIndex(peerId, 1);
         }
+    }
+
+    addPeer(peerId: NodeId, lastLogIndex: number): void {
+        if (this.peers.includes(peerId)) {
+            return
+        }
+
+        this.peers.push(peerId);
+        this.nextIndex.set(peerId, lastLogIndex + 1);
+        this.matchIndex.set(peerId, 0);
     }
 
     private async findLastIndexOfTerm(term: number, logManager: LogManager): Promise<number | null> {

@@ -5,7 +5,8 @@ describe('Config.ts, validateConfig', () => {
 
     const validConfig = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -13,7 +14,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig1 = {
         nodeId: "",
-        peerIds: ["node2", "node3"],
+        address: "",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -21,7 +23,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig2 = {
         nodeId: 123 as any,
-        peerIds: ["node2", "node3"],
+        address: "address2",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -29,7 +32,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig3 = {
         nodeId: "node1",
-        peerIds: "not an array" as any,
+        address: "address1",
+        peers: "not an array" as any,
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -37,7 +41,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig4 = {
         nodeId: "node1",
-        peerIds: ["node2", 123 as any],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }, { id: 123, address: "address4" }] as any,
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -45,7 +50,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig5 = {
         nodeId: "node1",
-        peerIds: ["node1", "node2"],
+        address: "address1",
+        peers: [{ id: "node1", address: "address1" }, { id: "node2", address: "address2" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -53,7 +59,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig6 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: "not an integer" as any,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -61,7 +68,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig7 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: -150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -69,7 +77,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig8 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: "not an integer" as any,
         heartbeatIntervalMs: 50
@@ -77,7 +86,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig9 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: -300,
         heartbeatIntervalMs: 50
@@ -85,7 +95,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig10 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 300,
         electionTimeoutMaxMs: 150,
         heartbeatIntervalMs: 50
@@ -93,7 +104,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig11 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: "not an integer" as any
@@ -101,7 +113,8 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig12 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: -50
@@ -109,11 +122,30 @@ describe('Config.ts, validateConfig', () => {
 
     const invalidConfig13 = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
         electionTimeoutMinMs: 100,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
     };
+
+    const invalidConfig14 = {
+        nodeId: "node1",
+        address: "",
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
+        electionTimeoutMinMs: 150,
+        electionTimeoutMaxMs: 300,
+        heartbeatIntervalMs: 50
+     };
+
+     const invalidConfig15 = {
+        nodeId: "node1",
+        address: 123 as any,
+        peers: [{ id: "node2", address: "address2" }, { id: "node3", address: "address3" }],
+        electionTimeoutMinMs: 150,
+        electionTimeoutMaxMs: 300,
+        heartbeatIntervalMs: 50
+     };
 
     it('should validate a correct config', () => {
         expect(() => validateConfig(validConfig)).not.toThrow();
@@ -127,16 +159,16 @@ describe('Config.ts, validateConfig', () => {
         expect(() => validateConfig(invalidConfig2)).toThrow("Invalid nodeId: 123. nodeId must be a non-empty string.");
     });
 
-    it('should throw error for non array peerIds', () => {
-        expect(() => validateConfig(invalidConfig3)).toThrow("Invalid peerIds: not an array. peerIds must be an array of strings.");
+    it('should throw error for non array peers', () => {
+        expect(() => validateConfig(invalidConfig3)).toThrow("Invalid peers: not an array. peers must be an array of ClusterMember objects.");
     });
 
-    it ('should throw error if peerIds includes a non string', () => {
-        expect(() => validateConfig(invalidConfig4)).toThrow("Invalid peerIds: node2,123. peerIds must be an array of strings.");
+    it ('should throw error if peers includes a non string id', () => {
+        expect(() => validateConfig(invalidConfig4)).toThrow("Invalid peers: peers must contain objects with string id and address.");
     });
 
-    it('should throw error if peerIds includes nodeId', () => {
-        expect(() => validateConfig(invalidConfig5)).toThrow("Invalid peerIds: node1,node2. peerIds cannot include the nodeId.");
+    it('should throw error if peers includes the nodeId', () => {
+        expect(() => validateConfig(invalidConfig5)).toThrow("Invalid peers: peers cannot include the nodeId.");
     });
 
     it('should throw error for non integer electionTimeoutMinMs', () => {
@@ -170,12 +202,21 @@ describe('Config.ts, validateConfig', () => {
     it('should throw error if electionTimeoutMinMs is less than three times heartbeatIntervalMs', () => {
         expect(() => validateConfig(invalidConfig13)).toThrow("Invalid electionTimeoutMinMs: 100. electionTimeoutMinMs must be at least three times the heartbeatIntervalMs: 50.");
     });
+
+    it('should throw error for empty address', () => {
+        expect(() => validateConfig(invalidConfig14)).toThrow("Invalid address: . address must be a non-empty string.");
+    });
+
+    it('should throw error for non string address', () => {
+        expect(() => validateConfig(invalidConfig15)).toThrow("Invalid address: 123. address must be a non-empty string.");
+    });
 });
 
 describe('Config.ts, createConfig', () => {
     const validConfigParams = {
         nodeId: "node1",
-        peerIds: ["node2", "node3"],
+        address: "address1",
+        peers: [ { id: "node2", address: "address2" }, { id: "node3", address: "address3" } ],
         electionTimeoutMinMs: 150,
         electionTimeoutMaxMs: 300,
         heartbeatIntervalMs: 50
@@ -184,7 +225,8 @@ describe('Config.ts, createConfig', () => {
     it('should create a valid config', () => {
         const config = createConfig(
             validConfigParams.nodeId,
-            validConfigParams.peerIds,
+            validConfigParams.address,
+            validConfigParams.peers,
             validConfigParams.electionTimeoutMinMs,
             validConfigParams.electionTimeoutMaxMs,
             validConfigParams.heartbeatIntervalMs
@@ -195,7 +237,8 @@ describe('Config.ts, createConfig', () => {
     it('should throw error for invalid config parameters', () => {
         expect(() => createConfig(
             "",
-            validConfigParams.peerIds,
+            validConfigParams.address,
+            validConfigParams.peers,
             validConfigParams.electionTimeoutMinMs,
             validConfigParams.electionTimeoutMaxMs,
             validConfigParams.heartbeatIntervalMs

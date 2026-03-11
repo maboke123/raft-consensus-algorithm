@@ -1,3 +1,4 @@
+import { roleColors } from "../constants/colors";
 import { useRaftStore } from "../store/raftStore";
 import { LogStrip } from "./LogStrip";
 
@@ -7,12 +8,17 @@ export function NodeDetail() {
     const nodes = useRaftStore((state) => state.nodes);
     const sendCommand = useRaftStore((state) => state.sendCommand);
 
+    const promoteServer = useRaftStore((state) => state.promoteLearner);
+    const removeServer = useRaftStore((state) => state.removeServer);
+
     const dropRate = useRaftStore((state) => state.dropRateByNode[selectedNodeId ?? ""] ?? 0);
     const setDropRate = useRaftStore((state) => state.setDropRate);
 
     const node = selectedNodeId ? nodes[selectedNodeId] : null;
 
     if (!node) return null;
+
+    const membershipColor = node.isLearner ? roleColors.Learner : roleColors.Leader;
 
     return (
         <div style={{
@@ -37,8 +43,24 @@ export function NodeDetail() {
                 </button>
             </div>
 
+            <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 8px',
+                borderRadius: 4,
+                border: `1px solid ${membershipColor}`,
+                width: 'fit-content',
+                fontFamily: 'monospace',
+                fontSize: 11,
+            }}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: membershipColor }} />
+                <span style={{ color: membershipColor }}>{node.isLearner ? 'Learner' : 'Voter'}</span>
+            </div>
+
             <Row label="Role"         value={node.role} />
             <Row label="Term"         value={String(node.term)} />
+            <Row label="Address"      value={node.address || '—'} />
             <Row label="Commit index" value={String(node.commitIndex)} />
             <Row label="Snapshot index" value={String(node.snapshotIndex)} />
             <Row label="Voted for"    value={node.votedFor ?? '—'} />
@@ -48,38 +70,43 @@ export function NodeDetail() {
                 {node.crashed ? (
                     <button
                         onClick={() => sendCommand({ type: 'RecoverNode', nodeId: node.nodeId })}
-                        style={{
-                            width: '100%',
-                            padding: '8px',
-                            background: 'transparent',
-                            border: '1px solid #2ea043',
-                            color: '#2ea043',
-                            borderRadius: 6,
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            cursor: 'pointer',
-                        }}
+                        style={btnStyle(roleColors.Recover)}
                     >
                         recover
                     </button>
                 ) : (
                     <button
                         onClick={() => sendCommand({ type: 'CrashNode', nodeId: node.nodeId })}
-                        style={{
-                            width: '100%',
-                            padding: '8px',
-                            background: 'transparent',
-                            border: '1px solid #d73a49',
-                            color: '#d73a49',
-                            borderRadius: 6,
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            cursor: 'pointer',
-                        }}
+                        style={btnStyle(roleColors.Crashed)}
                     >
                         crash
                     </button>
                 )}
+            </div>
+
+            <div style={{ borderTop: '1px solid #30363d', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#8b949e', letterSpacing: '0.1em' }}>MEMBERSHIP</div>
+
+                {node.isLearner && (
+                    <button
+                        onClick={() => promoteServer(node.nodeId)}
+                        style={btnStyle(roleColors.Learner)}
+                        title="Promote this learner to a voting member"
+                    >
+                        promote to voter
+                    </button>
+                )}
+
+                <button
+                    onClick={() => {
+                        removeServer(node.nodeId);
+                        selectNode(null);
+                    }}
+                    style={btnStyle('#8b949e')}
+                    title="Remove this node from the cluster"
+                >
+                    remove from cluster
+                </button>
             </div>
 
             <div style={{ borderTop: '1px solid #30363d', paddingTop: 12, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -158,4 +185,19 @@ function Row({ label, value }: { label: string; value: string }) {
             <span style={{ color: '#e6edf3' }}>{value}</span>
         </div>
     );
+}
+
+
+function btnStyle(color: string): React.CSSProperties {
+    return {
+        width: '100%',
+        padding: '8px',
+        background: 'transparent',
+        border: `1px solid ${color}`,
+        color: color,
+        borderRadius: 6,
+        fontFamily: 'monospace',
+        fontSize: 12,
+        cursor: 'pointer',
+    };
 }

@@ -13,6 +13,8 @@ import { RaftEventBus, BaseEvent } from "../events/RaftEvents";
 import { NoOpEventBus } from "../events/EventBus";
 import { SnapshotManager } from "../snapshot/SnapshotManager";
 import { ApplicationStateMachine } from "./RaftNode";
+import { ConfigManager } from "../config/ConfigManager";
+import { LogEntryType } from "../log/LogEntry";
 
 function baseEvent(nodeId: NodeId): BaseEvent {
     return {
@@ -55,9 +57,11 @@ export class StateMachine implements StateMachineInterface {
 
     private stateLock = new AsyncLock();
 
+    private onPeerDiscovered?: (peerId: NodeId, lastLogIndex: number) => void;
+
     constructor(
         private nodeId: NodeId,
-        private peers: NodeId[],
+        private configManager: ConfigManager,
         private config: RaftConfig,
         private persistentState: PersistentState,
         private volatileState: VolatileState,
@@ -69,8 +73,11 @@ export class StateMachine implements StateMachineInterface {
         private logger: Logger,
         private applyLock: AsyncLock,
         private onCommitIndexAdvanced?: (newCommitIndex: number) => void,
-        private eventBus: RaftEventBus = new NoOpEventBus()
-    ) {}
+        private eventBus: RaftEventBus = new NoOpEventBus(),
+        onPeerDiscovered?: (peerId: NodeId, lastLogIndex: number) => void
+    ) {
+        this.onPeerDiscovered = onPeerDiscovered;
+    }
 
     async start(): Promise<void> {
         this.logger.info(`Node ${this.nodeId} starting as ${this.currentState}`);
@@ -268,6 +275,13 @@ export class StateMachine implements StateMachineInterface {
 
                 await this.logManager.appendEntriesFrom(request.prevLogIndex, request.entries);
                 this.logger.info(`Node ${this.nodeId} appended ${request.entries.length} entries from ${from}`);
+
+                for (const entry of request.entries) {
+                    if (entry.type === LogEntryType.CONFIG && entry.config) {
+                        this.configManager.applyConfigEntry(entry.config);
+                        this.logger.info(`Node ${this.nodeId} processing configuration entry from ${from}, new config: ${JSON.stringify(entry.config)}`);
+                    }
+                }
             }
 
             const leaderCommit = request.leaderCommit;
@@ -276,6 +290,15 @@ export class StateMachine implements StateMachineInterface {
             if (leaderCommit > currentCommitIndex) {
                 const lastNewEntryIndex = request.prevLogIndex + request.entries.length;
                 const newCommitIndex = Math.min(leaderCommit, lastNewEntryIndex);
+
+                for (let i = currentCommitIndex + 1; i <= newCommitIndex; i++) {
+                    const entry = await this.logManager.getEntry(i);
+                    if (entry && entry.type == LogEntryType.CONFIG && entry.config) {
+                        await this.configManager.commitConfig(entry.config);
+                        this.logger.info(`Node ${this.nodeId} committed configuration entry at index ${i} from ${from}, new config: ${JSON.stringify(entry.config)}`);
+                    }
+                }
+
                 this.volatileState.setCommitIndex(newCommitIndex);
                 this.logger.info(`Node ${this.nodeId} updated commit index to ${newCommitIndex} based on leader ${from}`);
 
@@ -317,7 +340,8 @@ export class StateMachine implements StateMachineInterface {
             await this.snapshotManager.saveSnapshot({
                 lastIncludedIndex: request.lastIncludedIndex,
                 lastIncludedTerm: request.lastIncludedTerm,
-                data: request.data
+                data: request.data,
+                config: request.config
             });
 
             await this.applyLock.runExclusive(async () => {
@@ -332,6 +356,12 @@ export class StateMachine implements StateMachineInterface {
                 this.volatileState.setCommitIndex(request.lastIncludedIndex);
                 this.volatileState.setLastApplied(request.lastIncludedIndex);
             });
+
+            if (request.config.voters.length > 0) {
+                this.configManager.applyConfigEntry(request.config);
+                await this.configManager.commitConfig(request.config);
+                this.logger.info(`Node ${this.nodeId} applied new configuration from snapshot sent by ${from}, new config: ${JSON.stringify(request.config)}`);
+            }
 
             await this.becomeFollowerUnlocked(request.term, request.leaderId);
 
@@ -359,6 +389,11 @@ export class StateMachine implements StateMachineInterface {
     }
 
     private async handleElectionTimeoutUnlocked(): Promise<void> {
+        if (!this.configManager.isVoter(this.nodeId)) {
+            this.logger.info(`Node ${this.nodeId} is not a voter, ignoring election timeout`);
+            return;
+        }
+
         if (this.currentState === RaftState.Leader) {
             return;
         }
@@ -448,10 +483,12 @@ export class StateMachine implements StateMachineInterface {
         });
 
         this.votesReceived.clear();
-        this.votesReceived.add(this.nodeId);
 
-        const clusterSize = this.peers.length + 1;
-        this.votesNeeded = Math.floor(clusterSize / 2) + 1;
+        if (this.configManager.isVoter(this.nodeId)) {
+            this.votesReceived.add(this.nodeId);
+        }
+
+        this.votesNeeded = this.configManager.getQuorumSize();
 
         this.logger.info(`Node ${this.nodeId} became Candidate for term ${newTerm}, votes needed: ${this.votesNeeded}`);
 
@@ -486,10 +523,10 @@ export class StateMachine implements StateMachineInterface {
             term: currentTerm,
             leaderId: this.nodeId,
             voteCount: this.votesReceived.size,
-            clusterSize: this.peers.length + 1
+            clusterSize: this.configManager.getVoters().length
         });
 
-        this.leaderState = new LeaderState(this.peers, lastLogIndex);
+        this.leaderState = new LeaderState(this.configManager.getAllPeers(this.nodeId), lastLogIndex);
 
         this.timerManager.startHeartbeatTimer(() => this.sendHeartbeatsLocked());
 
@@ -508,9 +545,11 @@ export class StateMachine implements StateMachineInterface {
             lastLogTerm
         };
 
-        this.logger.info(`Node ${this.nodeId} sending RequestVote to peers: ${this.peers.join(", ")}`);
+        this.logger.info(`Node ${this.nodeId} sending RequestVote to peers: ${this.configManager.getAllPeers(this.nodeId).join(", ")}`);
 
-        for (const peer of this.peers) {
+        const voters = this.configManager.getVoters().filter(peerId => peerId !== this.nodeId);
+
+        for (const peer of voters) {
             this.sendRequestVote(peer, request)
         }
     }
@@ -583,7 +622,17 @@ export class StateMachine implements StateMachineInterface {
             throw new RaftError("LeaderState is required to send heartbeats", "LEADER_STATE_REQUIRED");
         }
 
-        for (const peer of this.peers) {
+        const allPeers = this.configManager.getAllPeers(this.nodeId);
+
+        for (const peer of allPeers) {
+            if (!this.leaderState.getPeers().includes(peer)) {
+                this.leaderState.addPeer(peer, this.logManager.getLastIndex());
+                this.onPeerDiscovered?.(peer, this.logManager.getLastIndex());
+                this.logger.info(`Node ${this.nodeId} added new peer ${peer} to LeaderState with nextIndex ${this.leaderState.getNextIndex(peer)}`);
+            }
+        }
+
+        for (const peer of allPeers) {
             this.sendAppendEntries(peer);
         }
     }
@@ -673,7 +722,8 @@ export class StateMachine implements StateMachineInterface {
                 leaderId: this.nodeId,
                 lastIncludedIndex: snapshot.lastIncludedIndex,
                 lastIncludedTerm: snapshot.lastIncludedTerm,
-                data: snapshot.data
+                data: snapshot.data,
+                config: snapshot.config
             };
         });
 
@@ -795,11 +845,30 @@ export class StateMachine implements StateMachineInterface {
         }
 
         const currentTerm = this.persistentState.getCurrentTerm();
-        const newCommitIndex = await this.leaderState.calculateCommitIndex(currentTerm, this.logManager);
+
+        const voters = this.configManager.getVoters();
+
+        const newCommitIndex = await this.leaderState.calculateCommitIndex(currentTerm, this.logManager, voters);
 
         const currentCommitIndex = this.volatileState.getCommitIndex();
 
         if (newCommitIndex > currentCommitIndex) {
+
+            for (let i = currentCommitIndex + 1; i <= newCommitIndex; i++) {
+                const entry = await this.logManager.getEntry(i);
+                if (entry && entry.type === LogEntryType.CONFIG && entry.config) {
+                    await this.configManager.commitConfig(entry.config);
+                    this.logger.info(`Node ${this.nodeId} committed configuration entry at index ${i} while advancing commit index, new config: ${JSON.stringify(entry.config)}`);
+
+                    if (this.leaderState) {
+                        const allPeers = this.configManager.getAllPeers(this.nodeId);
+                        for (const peer of allPeers) {
+                            this.leaderState.addPeer(peer, this.logManager.getLastIndex());
+                        }
+                    }
+                }
+            }
+
             this.volatileState.setCommitIndex(newCommitIndex);
             this.logger.info(`Node ${this.nodeId} advanced commit index to ${newCommitIndex}`);
 
@@ -812,6 +881,11 @@ export class StateMachine implements StateMachineInterface {
             });
 
             this.onCommitIndexAdvanced?.(newCommitIndex);
+
+            if (!this.configManager.isVoter(this.nodeId)) {
+                this.logger.info(`Node ${this.nodeId} is not a voter, skipping check for configuration changes at new commit index ${newCommitIndex}`);
+                await this.becomeFollowerUnlocked(currentTerm, null);
+            }
         }
     }
 }

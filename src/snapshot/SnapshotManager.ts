@@ -1,5 +1,7 @@
 import { Storage, StorageCodec } from "../storage/Storage";
 import { StorageError } from "../util/Error";
+import { ClusterConfig } from "../config/ClusterConfig";
+import { NodeId } from "../core/Config";
 
 export interface SnapshotMetaData {
     lastIncludedIndex: number;
@@ -8,6 +10,7 @@ export interface SnapshotMetaData {
 
 export interface Snapshot extends SnapshotMetaData {
     data: Buffer;
+    config: ClusterConfig;
 }
 
 export interface SnapshotManagerInterface {
@@ -20,6 +23,8 @@ export interface SnapshotManagerInterface {
 export const SNAPSHOT_INDEX_KEY = "raft:log:snapshot:index";
 export const SNAPSHOT_TERM_KEY = "raft:log:snapshot:term";
 export const SNAPSHOT_DATA_KEY = "raft:log:snapshot:data";
+export const SNAPSHOT_VOTERS_KEY = "raft:log:snapshot:config:voters";
+export const SNAPSHOT_LEARNERS_KEY = "raft:log:snapshot:config:learners";
 
 export class SnapshotManager implements SnapshotManagerInterface {
 
@@ -71,6 +76,16 @@ export class SnapshotManager implements SnapshotManagerInterface {
                 type: "set",
                 key: SNAPSHOT_DATA_KEY,
                 value: snapshot.data
+            },
+            {
+                type: "set",
+                key: SNAPSHOT_VOTERS_KEY,
+                value: StorageCodec.encodeJSON(snapshot.config.voters)
+            },
+            {
+                type: "set",
+                key: SNAPSHOT_LEARNERS_KEY,
+                value: StorageCodec.encodeJSON(snapshot.config.learners)
             }
         ]);
 
@@ -86,15 +101,23 @@ export class SnapshotManager implements SnapshotManagerInterface {
         }
 
         const dataBuffer = await this.storage.get(SNAPSHOT_DATA_KEY);
+        const votersBuffer = await this.storage.get(SNAPSHOT_VOTERS_KEY);
+        const learnersBuffer = await this.storage.get(SNAPSHOT_LEARNERS_KEY);
 
-        if (!dataBuffer) {
+        if (!dataBuffer || !votersBuffer || !learnersBuffer) {
             return null;
         }
+
+        const config: ClusterConfig = {
+            voters: StorageCodec.decodeJSON<NodeId[]>(votersBuffer),
+            learners: StorageCodec.decodeJSON<NodeId[]>(learnersBuffer)
+        };
 
         return {
             lastIncludedIndex: this.cachedIndex,
             lastIncludedTerm: this.cachedTerm,
-            data: dataBuffer
+            data: dataBuffer,
+            config: config
         };
     }
 

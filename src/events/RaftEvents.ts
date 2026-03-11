@@ -9,6 +9,7 @@ import {
     InstallSnapshotRequest,
 } from "../rpc/RPCTypes";
 import { RaftState } from "../core/StateMachine";
+import { ClusterConfig, ClusterMember } from "../config/ClusterConfig";
 
 export interface BaseEvent {
     eventId: string;
@@ -225,6 +226,39 @@ export interface SnapshotInstalledEvent extends BaseEvent {
     senderId: NodeId;
 }
 
+export interface ServerAddedEvent extends BaseEvent {
+    type: "ServerAdded";
+    addedNodeId: NodeId;
+    asLearner: boolean;
+    config: ClusterConfig;
+}
+
+export interface ServerRemovedEvent extends BaseEvent {
+    type: "ServerRemoved";
+    removedNodeId: NodeId;
+    config: ClusterConfig;
+}
+
+export interface LearnerPromotedEvent extends BaseEvent {
+    type: "LearnerPromoted";
+    promotedNodeId: NodeId;
+    config: ClusterConfig;
+}
+
+export interface ConfigChangedEvent extends BaseEvent {
+    type: "ConfigChanged";
+    voters: ClusterMember[];
+    learners: ClusterMember[];
+    commited: boolean;
+}
+
+export interface ConfigChangeRejectedEvent extends BaseEvent {
+    type: "ConfigChangeRejected";
+    voters: ClusterMember[];
+    learners: ClusterMember[];
+    reason: string;
+}
+
 export type RaftEvent =
     | NodeStateChangedEvent
     | TermChangedEvent
@@ -248,7 +282,12 @@ export type RaftEvent =
     | LinkHealedEvent
     | AllLinksHealedEvent
     | SnapshotTakenEvent
-    | SnapshotInstalledEvent;
+    | SnapshotInstalledEvent
+    | ServerAddedEvent
+    | ServerRemovedEvent
+    | LearnerPromotedEvent
+    | ConfigChangedEvent
+    | ConfigChangeRejectedEvent;
 
 export interface RaftEventBus {
     emit(event: RaftEvent): void;
@@ -259,6 +298,7 @@ export interface InitialStateMessage {
     type: "InitialState";
     events: RaftEvent[];
     nodeIds: NodeId[];
+    config?: ClusterConfig;
 }
 
 export interface LiveEventMessage {
@@ -314,6 +354,23 @@ export interface HealAllLinksMessage {
     type: "HealAllLinks";
 }
 
+export interface AddServerMessage {
+    type: "AddServer";
+    nodeId: NodeId;
+    address: string;
+    asLearner: boolean;
+}
+
+export interface RemoveServerMessage {
+    type: "RemoveServer";
+    nodeId: NodeId;
+}
+
+export interface PromoteLearnerMessage {
+    type: "PromoteLearner";
+    nodeId: NodeId;
+}
+
 export type ClientMessage =
     | SubmitCommandMessage
     | CrashNodeMessage
@@ -323,4 +380,7 @@ export type ClientMessage =
     | SetDropRateMessage
     | CutLinkMessage
     | HealLinkMessage
-    | HealAllLinksMessage;
+    | HealAllLinksMessage
+    | AddServerMessage
+    | RemoveServerMessage
+    | PromoteLearnerMessage;

@@ -81,6 +81,14 @@ export class DiskStorage implements Storage {
         });
     }
 
+    async clear(): Promise<void> {
+        this.ensureOpen();
+        await this.lock.runExclusive(async () => {
+            this.data.clear();
+            await this.persist(this.data);
+        });
+    }
+
     private async recover(): Promise<void> {
         const tmpExists = await this.fileExists(this.tmpFile);
         const dataExists = await this.fileExists(this.dataFile);

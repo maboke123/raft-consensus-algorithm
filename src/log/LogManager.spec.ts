@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { LogManager, SNAPSHOT_INDEX_KEY, SNAPSHOT_TERM_KEY } from "./LogManager";
-import { LogEntry, Command } from "./LogEntry";
+import { LogEntry, Command, LogEntryType } from "./LogEntry";
 import { InMemoryStorage } from "../storage/InMemoryStorage";
 import { LogInconsistencyError, StorageError } from "../util/Error";
 import { StorageCodec } from "../storage/Storage";
@@ -16,12 +16,12 @@ describe('LogManager.ts, LogManager', () => {
     const validCommand3: Command = { type: 'delete', payload: { key: 'x' } };
     const validCommand4: Command = { type: 'set', payload: { key: 'x', value: '10' } };
 
-    const validLogEntry: LogEntry = { index: 1, term: 1, command: validCommand };
-    const validLogEntry2: LogEntry = { index: 2, term: 1, command: validCommand2 };
-    const validLogEntry3: LogEntry = { index: 3, term: 1, command: validCommand3 };
-    const validLogEntry4: LogEntry = { index: 4, term: 2, command: validCommand4 };
+    const validLogEntry: LogEntry = { index: 1, term: 1, type: LogEntryType.COMMAND, command: validCommand };
+    const validLogEntry2: LogEntry = { index: 2, term: 1, type: LogEntryType.COMMAND, command: validCommand2 };
+    const validLogEntry3: LogEntry = { index: 3, term: 1, type: LogEntryType.COMMAND, command: validCommand3 };
+    const validLogEntry4: LogEntry = { index: 4, term: 2, type: LogEntryType.COMMAND, command: validCommand4 };
 
-    const invalidLogEntry: LogEntry = { index: 3, term: 1, command: validCommand };
+    const invalidLogEntry: LogEntry = { index: 3, term: 1, type: LogEntryType.COMMAND, command: validCommand };
 
     const emptyEntries: LogEntry[] = [];
 
@@ -181,8 +181,8 @@ describe('LogManager.ts, LogManager', () => {
     it('should throw when an entry in the range is missing', async () => {
         await logManager.initialize();
 
-        const entry1: LogEntry = { index: 1, term: 1, command: validCommand };
-        const entry3: LogEntry = { index: 3, term: 1, command: validCommand3 };
+        const entry1: LogEntry = { index: 1, term: 1, type: LogEntryType.COMMAND, command: validCommand };
+        const entry3: LogEntry = { index: 3, term: 1, type: LogEntryType.COMMAND, command: validCommand3 };
 
         await logManager.appendEntry(entry1);
 
@@ -427,7 +427,7 @@ describe('LogManager.ts, LogManager', () => {
     it('should skip entries that already exist in the log with matching term for appendEntriesFrom', async () => {
         await logManager.initialize();
         await logManager.appendEntries(validEntries);
-        const newEntry5: LogEntry = { index: 5, term: 2, command: validCommand};
+        const newEntry5: LogEntry = { index: 5, term: 2, type: LogEntryType.COMMAND, command: validCommand};
         const result = await logManager.appendEntriesFrom(2, [ validLogEntry, validLogEntry2, newEntry5 ]);
         expect(result).toBe(5);
         expect(logManager.getLastIndex()).toBe(5);
@@ -436,8 +436,8 @@ describe('LogManager.ts, LogManager', () => {
     it('should truncate from conflict index when term mismatches and append new entries for appendEntriesFrom', async () => {
         await logManager.initialize();
         await logManager.appendEntries(validEntries);
-        const conflictingEntry3: LogEntry = { index: 3, term: 3, command: validCommand3 };
-        const newEntry4: LogEntry = { index: 4, term: 3, command: validCommand4 };
+        const conflictingEntry3: LogEntry = { index: 3, term: 3, type: LogEntryType.COMMAND, command: validCommand3 };
+        const newEntry4: LogEntry = { index: 4, term: 3, type: LogEntryType.COMMAND, command: validCommand4 };
         const result = await logManager.appendEntriesFrom(2, [ conflictingEntry3, newEntry4 ]);
         expect(result).toBe(4);
         expect(logManager.getLastIndex()).toBe(4);
@@ -518,8 +518,8 @@ describe('LogManager.ts, LogManager', () => {
 
     it('should stop walking back when previous entry has different term', async () => {
         await logManager.initialize();
-        const entryTerm2: LogEntry = { index: 2, term: 2, command: validCommand2 };
-        const entryTerm2_2: LogEntry = { index: 3, term: 2, command: validCommand3 };
+        const entryTerm2: LogEntry = { index: 2, term: 2, type: LogEntryType.COMMAND, command: validCommand2 };
+        const entryTerm2_2: LogEntry = { index: 3, term: 2, type: LogEntryType.COMMAND, command: validCommand3 };
         await logManager.appendEntries([validLogEntry, entryTerm2, entryTerm2_2]);
         const result = await logManager.getConflictInfo(3);
         expect(result).toEqual({ conflictIndex: 2, conflictTerm: 2 });
@@ -541,7 +541,7 @@ describe('LogManager.ts, LogManager', () => {
         const newIndex = await logManager.appendCommand(validCommand, 1);
         expect(newIndex).toBe(1);
         const entry = await logManager.getEntry(1);
-        expect(entry).toEqual({ index: 1, term: 1, command: validCommand });
+        expect(entry).toEqual({ index: 1, term: 1, type: LogEntryType.COMMAND, command: validCommand });
     });
 
     it('should append multiple commmands with incrementing indices', async () => {
@@ -559,7 +559,7 @@ describe('LogManager.ts, LogManager', () => {
         await logManager.initialize();
         await logManager.appendCommand(validCommand, 3);
         const entry = await logManager.getEntry(1);
-        expect(entry).toEqual({ index: 1, term: 3, command: validCommand });
+        expect(entry).toEqual({ index: 1, term: 3, type: LogEntryType.COMMAND, command: validCommand });
     });
 
     it('should restore snapshotIndex from storage on initialize', async () => {
@@ -704,7 +704,7 @@ describe('LogManager.ts, LogManager', () => {
         await logManagerWithNodeId.initialize();
         await logManagerWithNodeId.appendEntries(validEntries);
 
-        const conflictingEntry3: LogEntry = { index: 3, term: 99, command: validCommand3 };
+        const conflictingEntry3: LogEntry = { index: 3, term: 99, type: LogEntryType.COMMAND, command: validCommand3 };
         await logManagerWithNodeId.appendEntriesFrom(2, [conflictingEntry3]);
 
         expect(eventBus.emit).toHaveBeenCalledWith(expect.objectContaining({
@@ -713,4 +713,51 @@ describe('LogManager.ts, LogManager', () => {
             truncatedFromIndex: 3,
         }));
     });
+
+    it('should throw when not initialized for appendConfigEntry', async () => {
+        await expect(logManager.appendConfigEntry({ voters: ['node1', 'node2'], learners: [] }, 1 )).rejects.toThrow('LogManager is not initialized');
+    });
+
+    it('should append a config entry and return the new index', async () => {
+        await logManager.initialize();
+        const config = { voters: ['node1', 'node2'], learners: [] };
+        const newIndex = await logManager.appendConfigEntry(config, 1);
+        expect(newIndex).toBe(1);
+        const entry = await logManager.getEntry(1);
+        expect(entry).toEqual({ index: 1, term: 1, type: LogEntryType.CONFIG, config });
+    });
+
+    it('should throw when not initialized for getLastConfigEntry', async () => {
+        await expect(logManager.getLastConfigEntry()).rejects.toThrow('LogManager is not initialized');
+    });
+
+    it('should return null for getLastConfigEntry when no config entry exists', async () => {
+        await logManager.initialize();
+        await logManager.appendEntries(validEntries);
+        const lastConfigEntry = await logManager.getLastConfigEntry();
+        expect(lastConfigEntry).toBeNull();
+    });
+
+    it('should return the last config entry for getLastConfigEntry', async () => {
+        await logManager.initialize();
+        const config = { voters: ['node1', 'node2'], learners: []};
+        await logManager.appendCommand(validCommand, 1);
+        await logManager.appendConfigEntry(config, 1);
+        await logManager.appendCommand(validCommand2, 1);
+        const result = await logManager.getLastConfigEntry();
+        expect(result).toEqual(config);
+    });
+
+    it('should emit logAppended event when nodeId is set and entry is appended', async () => {
+        const eventBus = { emit: vi.fn() };
+        const logManagerWithNodeId = new LogManager(storage, eventBus as any, 'node1');
+        await logManagerWithNodeId.initialize();
+        await logManagerWithNodeId.appendEntry(validLogEntry);
+        expect(eventBus.emit).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'LogAppended',
+            nodeId: 'node1',
+            entries: [validLogEntry],
+            term: 1
+        }));
+    })
 });

@@ -8,6 +8,8 @@ import { MockClock } from '../timing/Clock';
 import { SeededRandom } from '../util/Random';
 import { ConsoleLogger } from '../util/Logger';
 import { LeaderState } from '../state/LeaderState';
+import { LogEntryType } from '../log/LogEntry';
+import { ClusterConfig } from '../config/ClusterConfig';
 
 describe('RaftNode.ts, RaftNode', () => {
     const nodeId = 'node1';
@@ -20,6 +22,8 @@ describe('RaftNode.ts, RaftNode', () => {
         stop: ReturnType<typeof vi.fn>;
         send: ReturnType<typeof vi.fn>;
         onMessage: ReturnType<typeof vi.fn>;
+        addPeer?: ReturnType<typeof vi.fn>;
+        removePeer?: ReturnType<typeof vi.fn>;
     };
     let clock: MockClock;
     let random: SeededRandom;
@@ -74,7 +78,9 @@ describe('RaftNode.ts, RaftNode', () => {
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             send: vi.fn().mockResolvedValue(undefined),
-            onMessage: vi.fn()
+            onMessage: vi.fn(),
+            addPeer: vi.fn().mockResolvedValue(undefined),
+            removePeer: vi.fn().mockResolvedValue(undefined)
         };
 
         clock = new MockClock();
@@ -87,7 +93,10 @@ describe('RaftNode.ts, RaftNode', () => {
             installSnapshot: vi.fn().mockResolvedValue(undefined)
         };
 
-        config = createConfig(nodeId, peers, 150, 300, 50);
+        config = createConfig(nodeId, 'localhost:52000',[
+                { id: 'node2', address: 'localhost:52001' },
+                { id: 'node3', address: 'localhost:52002' }
+            ], 150, 300, 50);
 
         node = new RaftNode(config, storage, transport as any, appStateMachine as any, clock, random, silentLogger);
     });
@@ -776,7 +785,7 @@ describe('RaftNode.ts, RaftNode', () => {
             leaderId: 'node2',
             prevLogIndex: 0,
             prevLogTerm: 0,
-            entries: [{ index: 1, term: 1, command: { type: 'set', payload: { key: 'x', value: 10}}}],
+            entries: [{ index: 1, term: 1, type: LogEntryType.COMMAND, command: { type: 'set', payload: { key: 'x', value: 10}}}],
             leaderCommit: 1
         });
 
@@ -916,7 +925,8 @@ describe('RaftNode.ts, RaftNode', () => {
         vi.spyOn(snapshotManager, 'loadSnapshot').mockResolvedValue({
             lastIncludedIndex: 5,
             lastIncludedTerm: 1,
-            data: Buffer.from('snapshot')
+            data: Buffer.from('snapshot'),
+            config: { voters: [], learners: []}
         });
 
         const installSpy = vi.fn().mockResolvedValue(undefined);
@@ -941,7 +951,8 @@ describe('RaftNode.ts, RaftNode', () => {
                 leaderId: 'node2',
                 lastIncludedIndex: 5,
                 lastIncludedTerm: 1,
-                data: Buffer.from('snapshot')
+                data: Buffer.from('snapshot'),
+                config: { voters: [], learners: [] }
             }
         };
 
@@ -1019,6 +1030,509 @@ describe('RaftNode.ts, RaftNode', () => {
         });
 
         expect(saveSnapshotSpy).not.toHaveBeenCalled();
+    });
+
+    it('should return false when node is not started', async () => {
+        const result = await node.addServer('node49', 'localhost:4030');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is not leader', async () => {
+        await node.start();
+        const result = await node.addServer('node49', 'localhost:4030');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when there is a pending config change', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'hasPendingChange').mockReturnValue(true);
+
+        const result = await node.addServer('node4', 'localhost:3943');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is already a voter', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        (node as any)['configManager']['commitedConfig'] = { voters: [ { id: 'node1', address: 'localhost:52000'} , { id: 'node2', address: 'localhost:52001' }, { id: 'node3', address: 'localhost:52002' } ], learners: []};
+        (node as any)['configManager']['activeConfig'] = { voters: [{ id: 'node1', address: 'localhost:52000'} , { id: 'node2', address: 'localhost:52001' }, { id: 'node3', address: 'localhost:52002' } ], learners: []};
+
+        const result = await node.addServer('node2', 'localhost:3943');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is already a learner', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        (node as any)['configManager']['commitedConfig'] = { voters: [ { id: 'node1', address: 'localhost:52000'} , { id: 'node2', address: 'localhost:52001' }, { id: 'node3', address: 'localhost:52002' } ], learners: [{ id: 'node4', address: 'localhost:52003' }]};
+        (node as any)['configManager']['activeConfig'] = { voters: [{ id: 'node1', address: 'localhost:52000'} , { id: 'node2', address: 'localhost:52001' }, { id: 'node3', address: 'localhost:52002' } ], learners: [{ id: 'node4', address: 'localhost:52003' }]};
+
+        const result = await node.addServer('node4', 'localhost:3943');
+        expect(result).toBe(false);
+    });
+
+    it('should call transport.addPeer when adding a new server', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+
+        const result = await node.addServer('node4', 'localhost:3943');
+        expect(transport.addPeer).toHaveBeenCalledWith('node4', 'localhost:3943');
+        expect(result).toBe(true);
+    });
+
+    it('should add a node as voter by default', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+        const submitConfigChangeSpy = vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+
+        const result = await node.addServer('node4', 'localhost:3943');
+        const calledConfig = submitConfigChangeSpy.mock.calls[0][0] as ClusterConfig;
+        expect(calledConfig.voters.map(m => m.id)).toContain('node4');
+        expect(calledConfig.learners.map(m => m.id)).not.toContain('node4');
+        expect(result).toBe(true);
+    });
+
+    it('should add a node as learner when specified', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+        const submitConfigChangeSpy = vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+
+        const result = await node.addServer('node4', 'localhost:3943', true);
+        const calledConfig = submitConfigChangeSpy.mock.calls[0][0] as ClusterConfig;
+        expect(calledConfig.learners.map(m => m.id)).toContain('node4');
+        expect(calledConfig.voters.map(m => m.id)).not.toContain('node4');
+        expect(result).toBe(true);
+    });
+
+    it('should return false when node is not started', async () => {
+        const result = await node.removeServer('node2');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is not leader', async () => {
+        await node.start();
+        const result = await node.removeServer('node2');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when there is a pending config change', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'hasPendingChange').mockReturnValue(true);
+        const result = await node.removeServer('node2');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is not a voter or learner', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }], learners: [{ id: 'node4', address: 'localhost:52004'}, { id: 'node5', address: 'localhost:52005' }]});
+
+        const result = await node.removeServer('node49');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when removing voter would leave fewer than 2 voters', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }], learners: []});
+
+        const result = await node.removeServer('node2');
+        expect(result).toBe(false);
+    });
+
+    it('should submit config change removing the voter', async () => {
+        await node.start();
+        forceLeader(node);
+        const submitConfigChangeSpy = vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+        const result = await node.removeServer('node2');
+        const calledConfig = submitConfigChangeSpy.mock.calls[0][0] as ClusterConfig;
+        expect(calledConfig.voters.map(m => m.id)).not.toContain('node2');
+        expect(calledConfig.learners.map(m => m.id)).not.toContain('node2');
+        expect(result).toBe(true);
+    });
+
+    it('should call transport.removePeer when removing a server', async () => {
+        await node.start();
+        forceLeader(node);
+        transport.removePeer = vi.fn().mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+        const result = await node.removeServer('node2');
+        expect(transport.removePeer).toHaveBeenCalledWith('node2');
+        expect(result).toBe(true);
+    });
+
+    it('should not call transport.removePeer if submitConfigChange fails', async () => {
+        await node.start();
+        forceLeader(node);
+        transport.removePeer = vi.fn().mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(false);
+        const result = await node.removeServer('node2');
+        expect(transport.removePeer).not.toHaveBeenCalled();
+        expect(result).toBe(false);
+    });
+
+    it('should remove a learner without the voter count check', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }], learners: [{ id: 'node3', address: 'localhost:52003' }]});
+
+        const submitConfigChangeSpy = vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+        transport.removePeer = vi.fn().mockResolvedValue(undefined);
+
+        const result = await node.removeServer('node3');
+        const calledConfig = submitConfigChangeSpy.mock.calls[0][0] as ClusterConfig;
+        expect(calledConfig.learners.map(m => m.id)).not.toContain('node3');
+        expect(result).toBe(true);
+    });
+
+    it('should return false when node is not started', async () => {
+        const result = await node.promoteServer('node3');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is not leader', async () => {
+        await node.start();
+        const result = await node.promoteServer('node3');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when there is a pending config change', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'hasPendingChange').mockReturnValue(true);
+        const result = await node.promoteServer('node3');
+        expect(result).toBe(false);
+    });
+
+    it('should return false when node is not a learner', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }], learners: [{ id: 'node3', address: 'localhost:52003' }]});
+
+        const result = await node.promoteServer('node2');
+        expect(result).toBe(false);
+    });
+
+    it('should move node from learners to voters', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }], learners: [{ id: 'node3', address: 'localhost:52003' }]});
+
+        const submitConfigChangeSpy = vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(true);
+        const result = await node.promoteServer('node3');
+        const calledConfig = submitConfigChangeSpy.mock.calls[0][0] as ClusterConfig;
+        expect(calledConfig.voters.map(m => m.id)).toContain('node3');
+        expect(calledConfig.learners.map(m => m.id)).not.toContain('node3');
+        expect(result).toBe(true);
+    });
+
+    it('should return false when no longer leader after appending config entry', async () => {
+        await node.start();
+
+        forceLeader(node, 1);
+
+        const logManager = (node as any)['logManager'];
+
+        vi.spyOn(logManager, 'appendConfigEntry').mockImplementation(async () => {
+            (node as any)['stateMachine']['currentState'] = RaftState.Follower;
+            return 1;
+        });
+
+        const result = await (node as any)['submitConfigChange']({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }], learners: []});
+        expect(result).toBe(false);
+    });
+
+    it('should return false when commit times out', async () => {
+        await node.start();
+
+        forceLeader(node, 1);
+
+        const logManager = (node as any)['logManager'];
+
+        vi.spyOn(logManager, 'appendConfigEntry').mockResolvedValue(1);
+        vi.spyOn(node as any, 'triggerReplication').mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'waitForCommit').mockResolvedValue(false);
+
+        const result = await (node as any)['submitConfigChange']({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }], learners: []});
+        expect(result).toBe(false);
+    });
+
+    it('should call applyConfigEntry on configManager when appending', async () => {
+        await node.start();
+
+        forceLeader(node, 1);
+
+        const newConfig = { voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }], learners: []};
+        const logManager = (node as any)['logManager'];
+
+        vi.spyOn(logManager, 'appendConfigEntry').mockResolvedValue(1);
+        vi.spyOn(node as any, 'triggerReplication').mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'waitForCommit').mockResolvedValue(true);
+
+        const applyConfigEntrySpy = vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockResolvedValue(undefined);
+
+        const result = await (node as any)['submitConfigChange'](newConfig);
+        expect(applyConfigEntrySpy).toHaveBeenCalledWith(newConfig);
+        expect(result).toBe(true);
+    });
+
+    it('should return true when commit succeeds', async () => {
+        await node.start();
+
+        forceLeader(node, 1);
+
+        const logManager = (node as any)['logManager'];
+
+        vi.spyOn(logManager, 'appendConfigEntry').mockResolvedValue(1);
+        vi.spyOn(node as any, 'triggerReplication').mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'waitForCommit').mockResolvedValue(true);
+
+        const result = await (node as any)['submitConfigChange']({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }], learners: []});
+        expect(result).toBe(true);
+    });
+
+    it('should apply and commit config from snapshot when voters non-empty', async () => {
+        const snapshotManager = (node as any)['snapshotManager'];
+        const snapshotConfig = { voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }], learners: []};
+        vi.spyOn(snapshotManager, 'initialize').mockResolvedValue(undefined);
+        vi.spyOn(snapshotManager, 'loadSnapshot').mockResolvedValue({
+            lastIncludedIndex: 5,
+            lastIncludedTerm: 1,
+            data: Buffer.from('snapshot'),
+            config: snapshotConfig
+        });
+
+        const applyConfigEntrySpy = vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockResolvedValue(undefined);
+        const commitConfigSpy = vi.spyOn((node as any)['configManager'], 'commitConfig').mockResolvedValue(undefined);
+
+        await node.start();
+
+        expect(applyConfigEntrySpy).toHaveBeenCalledWith(snapshotConfig);
+        expect(commitConfigSpy).toHaveBeenCalledWith(snapshotConfig);
+    });
+
+    it('should not apply config from snapshot when voters list is empty', async () => {
+        const snapshotManager = (node as any)['snapshotManager'];
+        const snapshotConfig = { voters: [], learners: [{ id: 'node4', address: 'localhost:52004' }]};
+        vi.spyOn(snapshotManager, 'initialize').mockResolvedValue(undefined);
+        vi.spyOn(snapshotManager, 'loadSnapshot').mockResolvedValue({
+            lastIncludedIndex: 5,
+            lastIncludedTerm: 1,
+            data: Buffer.from('snapshot'),
+            config: snapshotConfig
+        });
+
+        const applyConfigEntrySpy = vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockResolvedValue(undefined);
+
+        await node.start();
+
+        expect(applyConfigEntrySpy).not.toHaveBeenCalled();
+    });
+
+    it('should apply config from latest log entry on start', async () => {
+        const logManager = (node as any)['logManager'];
+        const latestConfig = { voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }], learners: []};
+
+        vi.spyOn(logManager, 'getLastConfigEntry').mockResolvedValue(latestConfig);
+
+        const applyConfigEntrySpy = vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockResolvedValue(undefined);
+
+        await node.start();
+
+        expect(applyConfigEntrySpy).toHaveBeenCalledWith(latestConfig);
+    });
+
+    it('should not apply log ocnfig when no config entry exists', async () => {
+        const logManager = (node as any)['logManager'];
+        vi.spyOn(logManager, 'getLastConfigEntry').mockResolvedValue(null);
+
+        const applyConfigEntrySpy = vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockResolvedValue(undefined);
+
+        await node.start();
+
+        expect(applyConfigEntrySpy).not.toHaveBeenCalled();
+    });
+
+    it('should skip applying CONFIG entries and still advance lastApplied', async () => {
+        await node.start();
+
+        const logManager = (node as any)['logManager'];
+        const volatileState = (node as any)['volatileState'];
+
+        await logManager.appendConfigEntry({ voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }], learners: []}, 1);
+        volatileState.setCommitIndex(1);
+
+        await tickApplyLoop();
+
+        await vi.waitFor(() => {
+            expect(volatileState.getLastApplied()).toBe(1);
+        });
+
+        expect(appStateMachine.apply).not.toHaveBeenCalled();
+    });
+
+    it('should emit ConfigChangeRejected when submitConfigChange fails', async () => {
+        await node.start();
+        forceLeader(node);
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+        vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(false);
+
+        const emittedEvents: any[] = [];
+        (node as any)['bus'] = {
+            emit: (e: any) => emittedEvents.push(e),
+            subscribe: vi.fn()
+        };
+
+        await node.addServer('node4', 'localhost:52003');
+
+        const rejected = emittedEvents.find(e => e.type === 'ConfigChangeRejected');
+        expect(rejected).toBeDefined();
+        expect(rejected.reason).toBe('Failed to commit configuration change');
+    });
+
+    it('should call transport.addPeer via onPeerDiscovered callback using address from configManager', async () => {
+        await node.start();
+
+        forceLeader(node);
+
+        (node as any)['configManager']['activeConfig'] = {
+            voters: [{ id: 'node1', address: 'localhost:52001' }, { id: 'node2', address: 'localhost:52002' }, { id: 'node3', address: 'localhost:52003' }, { id: 'node4', address: 'localhost:52004' }],
+            learners: []
+        };
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+
+        const onPeerDiscovered = (node as any)['stateMachine']['onPeerDiscovered'];
+        onPeerDiscovered('node4', 0);
+
+        expect(transport.addPeer).toHaveBeenCalledWith('node4', 'localhost:52004');
+    });
+
+    it('should not call transport.addPeer via onPeerDiscovered when address is not found', async () => {
+        await node.start();
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+
+        const onPeerDiscovered = (node as any)['stateMachine']['onPeerDiscovered'];
+        onPeerDiscovered('node49', 0);
+
+        expect(transport.addPeer).not.toHaveBeenCalled();
+    });
+
+    it('should call transport.addPeer when registerPeer is called', async () => {
+        await node.start();
+
+        transport.addPeer = vi.fn().mockResolvedValue(undefined);
+
+        await node.registerPeer('node4', 'localhost:52003');
+        expect(transport.addPeer).toHaveBeenCalledWith('node4', 'localhost:52003');
+    });
+
+    it('should not emit LearnerPromoted event when promoteServer fails', async () => {
+        await node.start();
+        forceLeader(node);
+
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({
+            voters: [{ id: 'node1', address: 'localhost:52000' }, { id: 'node2', address: 'localhost:52001' }],
+            learners: [{ id: 'node3', address: 'localhost:52002' }]
+        });
+
+        vi.spyOn(node as any, 'submitConfigChange').mockResolvedValue(false);
+
+        const emittedEvents: any[] = [];
+        (node as any)['bus'] = {
+            emit: (e: any) => emittedEvents.push(e),
+            subscribe: vi.fn()
+        };
+
+        const result = await node.promoteServer('node3');
+
+        expect(result).toBe(false);
+        const promoted = emittedEvents.find(e => e.type === 'LearnerPromoted');
+        expect(promoted).toBeUndefined();
+    });
+
+        it('should log learners when loading snapshot config with learners', async () => {
+        const snapshotManager = (node as any)['snapshotManager'];
+        vi.spyOn(snapshotManager, 'initialize').mockResolvedValue(undefined);
+        vi.spyOn(snapshotManager, 'loadSnapshot').mockResolvedValue({
+            lastIncludedIndex: 5,
+            lastIncludedTerm: 1,
+            data: Buffer.from('snapshot'),
+            config: {
+                voters: [{ id: 'node1', address: 'localhost:52000' }],
+                learners: [{ id: 'node4', address: 'localhost:52003' }]
+            }
+        });
+        vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockReturnValue(undefined);
+        vi.spyOn((node as any)['configManager'], 'commitConfig').mockResolvedValue(undefined);
+        await node.start();
+        expect(node.isStarted()).toBe(true);
+    });
+
+    it('should log learners when applying config from log entry with learners', async () => {
+        const logManager = (node as any)['logManager'];
+        vi.spyOn(logManager, 'getLastConfigEntry').mockResolvedValue({
+            voters: [{ id: 'node1', address: 'localhost:52000' }, { id: 'node2', address: 'localhost:52001' }],
+            learners: [{ id: 'node4', address: 'localhost:52003' }]
+        });
+        vi.spyOn((node as any)['configManager'], 'applyConfigEntry').mockReturnValue(undefined);
+        await node.start();
+        expect(node.isStarted()).toBe(true);
+    });
+
+    it('should return false when node is already a learner via mock', async () => {
+        await node.start();
+        forceLeader(node);
+        vi.spyOn((node as any)['configManager'], 'getActiveConfig').mockReturnValue({
+            voters: [{ id: 'node1', address: 'localhost:52000' }, { id: 'node2', address: 'localhost:52001' }, { id: 'node3', address: 'localhost:52002' }],
+            learners: [{ id: 'node4', address: 'localhost:52003' }]
+        });
+        const result = await node.addServer('node4', 'localhost:52003');
+        expect(result).toBe(false);
+    });
+
+    it('should not throw when transport.removePeer is undefined', async () => {
+        await node.start();
+
+        transport.removePeer = undefined;
+
+        await expect(
+            node.removePeer('node4')
+        ).resolves.not.toThrow();
     });
 });
 

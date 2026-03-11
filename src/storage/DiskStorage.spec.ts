@@ -398,4 +398,21 @@ describe("DiskStorage.ts, DiskStorage", () => {
         await expect(storage.set("key", bufferFromString("value"))).rejects.toThrow(StorageError);
         await storage.close();
     });
+
+    it('clears all stored values', async () => {
+        const storage = await openStorage();
+
+        await storage.set("key1", bufferFromString("value1"));
+        await storage.set("key2", bufferFromString("value2"));
+
+        await storage.clear();
+
+        const value1 = await storage.get("key1");
+        const value2 = await storage.get("key2");
+
+        expect(value1).toBeNull();
+        expect(value2).toBeNull();
+
+        await storage.close();
+    });
 });

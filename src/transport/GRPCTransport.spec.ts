@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RPCMessage } from "../rpc/RPCTypes";
 import { GrpcTransport, rpcMessageToGrpc, grpcToRpcMessage, serializeAppendEntriesResponse } from "./GRPCTransport";
-import { LogEntry } from "../log/LogEntry";
+import { LogEntry, LogEntryType } from "../log/LogEntry";
 import { NetworkError } from "../util/Error";
 import path from "path";
 
-let portCounter = 52000;
+let portCounter = 52000 + Math.floor(Math.random() * 5000);
 
 function nextPort() {
     return portCounter++;
@@ -69,7 +69,11 @@ const installSnapshotRequest: RPCMessage = {
         leaderId: "nodeA",
         lastIncludedIndex: 0,
         lastIncludedTerm: 0,
-        data: Buffer.from("snapshot data")
+        data: Buffer.from("snapshot data"),
+        config: { voters: [
+            { id: "node1", address: "localhost:9090" },
+            { id: "node2", address: "localhost:9091"}
+        ], learners: [] }
     }
 };
 
@@ -96,7 +100,7 @@ describe('GRPCTransport.ts, rpcMessageToGrpc', () => {
     });
 
     it('should serialize log entry payloads correctly', () => {
-        const logEntry: LogEntry = { term: 1, index: 1, command: { type: "set", payload: { key: "x", value: 42 } } };
+        const logEntry: LogEntry = { term: 1, index: 1, type: LogEntryType.COMMAND, command: { type: "set", payload: { key: "x", value: 42 } } };
         const message: RPCMessage = {
             type: "AppendEntries",
             direction: "request",
@@ -122,8 +126,8 @@ describe('GRPCTransport.ts, rpcMessageToGrpc', () => {
 
     it('should serialize multiple log entries correctly', () => {
         const logEntries: LogEntry[] = [
-            { term: 1, index: 1, command: { type: "set", payload: { key: "x", value: 42 } } },
-            { term: 1, index: 2, command: { type: "set", payload: { key: "y", value: 43 } } }
+            { term: 1, index: 1, type: LogEntryType.COMMAND, command: { type: "set", payload: { key: "x", value: 42 } } },
+            { term: 1, index: 2, type: LogEntryType.COMMAND, command: { type: "set", payload: { key: "y", value: 43 } } }
         ];
         const message: RPCMessage = {
             type: "AppendEntries",
@@ -205,7 +209,7 @@ describe('GRPCTransport.ts, rpcMessageToGrpc', () => {
     it('should map an install snapshot request correctly', () => {
         const result = rpcMessageToGrpc(installSnapshotRequest);
         expect(result.method).toBe("InstallSnapshot");
-        expect(result.payload).toEqual(installSnapshotRequest.payload);
+        expect((result.payload as any).config).toBe(JSON.stringify(installSnapshotRequest.payload.config));
     });
 });
 
@@ -562,7 +566,7 @@ describe('GRPCTransport.ts, GrpcTransport', () => {
     it('should round trip a logEntry with primitive json payload', async () => {
         const { transportA, transportB } = makePair();
 
-        const logEntry: LogEntry = { term: 1, index: 1, command: { type: "set", payload: { key: "x", value: 42 } } };
+        const logEntry: LogEntry = { term: 1, index: 1, type: LogEntryType.COMMAND, command: { type: "set", payload: { key: "x", value: 42 } } };
         let receivedEntry: LogEntry | null = null;
 
         transportB.onMessage(async (from, msg) => {
@@ -626,7 +630,7 @@ describe('GRPCTransport.ts, GrpcTransport', () => {
                 leaderId: "nodeA",
                 prevLogIndex: 0,
                 prevLogTerm: 0,
-                entries: [{ term: 1, index: 1, command: { type: "set", payload: nestedPayload } }],
+                entries: [{ term: 1, index: 1, type: LogEntryType.COMMAND, command: { type: "set", payload: nestedPayload } }],
                 leaderCommit: 0
              }
          });
@@ -634,6 +638,7 @@ describe('GRPCTransport.ts, GrpcTransport', () => {
         expect(receivedEntry).toEqual({
             term: 1,
             index: 1,
+            type: LogEntryType.COMMAND,
             command: {
                 type: "set",
                 payload: nestedPayload
@@ -939,5 +944,163 @@ describe('GRPCTransport.ts, GrpcTransport', () => {
 
         await transportA.stop();
         await transportB.stop();
+    });
+
+    it('should add a peer dynamically and send messages to it', async () => {
+        const portA = nextPort();
+        const portC = nextPort();
+
+        const transportA = new GrpcTransport("nodeA", portA, {});
+        const transportC = new GrpcTransport("nodeC", portC, {});
+
+        transportC.onMessage(async () => requestVoteResponse);
+
+        await transportC.start();
+        await transportA.start();
+
+        await transportA.addPeer("nodeC", `localhost:${portC}`);
+
+        const response = await transportA.send("nodeC", requestVoteRequest);
+        expect(response).toEqual(requestVoteResponse);
+
+        await transportA.stop();
+        await transportC.stop();
+    });
+
+    it('should not throw when adding an already existing peer', async () => {
+        const { transportA } = makePair();
+        await transportA.start();
+        await expect(transportA.addPeer("nodeB", "localhost:1234")).resolves.not.toThrow();
+        await transportA.stop();
+    });
+
+    it('should remove a peer and prevent sending to it', async () => {
+        const { transportA, transportB } = makePair();
+
+        await transportA.start();
+        await transportB.start();
+
+        transportA.removePeer("nodeB");
+        await expect(transportA.send("nodeB", requestVoteRequest)).rejects.toThrowError(NetworkError);
+
+        await transportA.stop();
+        await transportB.stop();
+    });
+
+    it('should silently ignore removePeer for unknown peer', async () => {
+        const { transportA } = makePair();
+        await transportA.start();
+        expect(() => transportA.removePeer('unknownPeer')).not.toThrow();
+        await transportA.stop();
+    });
+
+    it('should throw when addind peer before transport is started', async () => {
+        const { transportA } = makePair();
+
+        await expect(transportA.addPeer('nodeC', "localhost:56768")).rejects.toThrowError('Transport is not initialized. Start the transport before adding peers.')
+    });
+
+    it("should force shutdown when tryShutdown returns error", async () => {
+        const { transportA } = makePair();
+        await transportA.start();
+
+        const server = (transportA as any).server;
+
+        vi.spyOn(server, "tryShutdown").mockImplementation((cb: any) => {
+            cb(new Error("shutdown failed"));
+        });
+
+        const forceSpy = vi.spyOn(server, "forceShutdown");
+
+        await transportA.stop();
+
+        expect(forceSpy).toHaveBeenCalled();
+    });
+
+    it("should force shutdown when tryShutdown hangs", async () => {
+        vi.useFakeTimers();
+
+        const { transportA } = makePair();
+
+        const forceShutdown = vi.fn();
+        const tryShutdown = vi.fn(() => {});
+
+        (transportA as any).server = {
+            tryShutdown,
+            forceShutdown
+        };
+
+        (transportA as any).started = true;
+
+        const stopPromise = transportA.stop();
+
+        await vi.advanceTimersByTimeAsync((transportA as any).shutdownTimeoutMs);
+
+        await stopPromise;
+
+        expect(forceShutdown).toHaveBeenCalled();
+
+        vi.useRealTimers();
+    });
+
+    it('should convert non-Buffer data to Buffer in InstallSnapshot handler', async () => {
+        const port = nextPort();
+        const transport = new GrpcTransport("nodeA", port, {});
+        const handler = vi.fn().mockResolvedValue({
+            type: "InstallSnapshot" as const,
+            direction: "response" as const,
+            payload: { term: 1, success: true }
+        } as RPCMessage);
+        transport.onMessage(handler);
+
+        const serviceImpl = (transport as any).buildServiceImplementation();
+        const callback = vi.fn();
+
+        await serviceImpl.InstallSnapshot({
+            request: {
+                term: 1,
+                leaderId: "nodeA",
+                lastIncludedIndex: 0,
+                lastIncludedTerm: 0,
+                data: new Uint8Array(Buffer.from("snapshot data")),
+                config: JSON.stringify({ voters: [], learners: [] })
+            },
+            metadata: { get: () => [] }
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith(null, expect.anything());
+        const receivedData = handler.mock.calls[0][1].payload.data;
+        expect(Buffer.isBuffer(receivedData)).toBe(true);
+        expect(receivedData).toEqual(Buffer.from("snapshot data"));
+    });
+
+    it('should use default config when config field is absent in InstallSnapshot handler', async () => {
+        const port = nextPort();
+        const transport = new GrpcTransport("nodeA", port, {});
+        const handler = vi.fn().mockResolvedValue({
+            type: "InstallSnapshot" as const,
+            direction: "response" as const,
+            payload: { term: 1, success: true }
+        } as RPCMessage);
+        transport.onMessage(handler);
+
+        const serviceImpl = (transport as any).buildServiceImplementation();
+        const callback = vi.fn();
+
+        await serviceImpl.InstallSnapshot({
+            request: {
+                term: 1,
+                leaderId: "nodeA",
+                lastIncludedIndex: 0,
+                lastIncludedTerm: 0,
+                data: Buffer.from("snapshot data"),
+                config: ""
+            },
+            metadata: { get: () => [] }
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith(null, expect.anything());
+        const receivedConfig = handler.mock.calls[0][1].payload.config;
+        expect(receivedConfig).toEqual({ voters: [], learners: [] });
     });
 });

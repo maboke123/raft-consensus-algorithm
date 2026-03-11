@@ -41,6 +41,7 @@ export class WsServer {
             type: "InitialState",
             events: this.eventStore.getAllEvents(),
             nodeIds: this.cluster.getNodeIds(),
+            config: this.cluster.getCommittedConfig()
         };
 
         ws.send(JSON.stringify(initial));
@@ -83,13 +84,16 @@ export class WsServer {
     private handleMessage(message: ClientMessage): void {
         switch (message.type) {
             case "SubmitCommand":
-                this.cluster.submitCommand(message.command);
+                this.cluster.submitCommand(message.command)
+                    .catch(err => console.error("SubmitCommand failed:", err.message));
                 break;
             case "CrashNode":
-                this.cluster.crashNode(message.nodeId);
+                this.cluster.crashNode(message.nodeId)
+                    .catch(err => console.error("CrashNode failed:", err.message));
                 break;
             case "RecoverNode":
-                this.cluster.recoverNode(message.nodeId);
+                this.cluster.recoverNode(message.nodeId)
+                    .catch(err => console.error("RecoverNode failed:", err.message));
                 break;
             case "PartitionNodes":
                 this.cluster.partitionNodes(message.groups);
@@ -108,6 +112,18 @@ export class WsServer {
                 break;
             case "HealAllLinks":
                 this.cluster.healAllLinks();
+                break;
+            case "AddServer":
+                this.cluster.addServer(message.nodeId, message.address, message.asLearner)
+                    .catch(err => console.error("AddServer failed:", err.message));
+                break;
+            case "RemoveServer":
+                this.cluster.removeServer(message.nodeId)
+                    .catch(err => console.error("RemoveServer failed:", err.message));
+                break;
+            case "PromoteLearner":
+                this.cluster.promoteServer(message.nodeId)
+                    .catch(err => console.error("PromoteLearner failed:", err.message));
                 break;
             default:
                 console.warn("Unknown message type from client:", message);

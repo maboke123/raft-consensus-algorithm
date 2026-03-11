@@ -1,4 +1,4 @@
-import type { ClientCommand, MessageArrow, NodeUIState, RaftEvent } from "../types/raftTypes";
+import type { ClientCommand, ClusterConfig, MessageArrow, NodeUIState, RaftEvent } from "../types/raftTypes";
 import { create } from 'zustand'
 
 interface RaftStore {
@@ -14,8 +14,10 @@ interface RaftStore {
     messageVisibility: Record<string, boolean>;
     snapshottingNodes: Set<string>;
     installingSnapshotNodes: Set<string>;
+    clusterConfig: ClusterConfig;
+    pendingConfigChange: boolean;
     toggleMessageVisibility: (messageType: string) => void;
-    setNodeIds: (ids: string[]) => void;
+    setNodeIds: (ids: string[], config?: ClusterConfig) => void;
     pushEvent: (event: RaftEvent) => void;
     processEvent: (event: RaftEvent) => void;
     selectNode: (nodeId: string | null) => void;
@@ -26,14 +28,18 @@ interface RaftStore {
     healLink: (nodeA: string, nodeB: string) => void;
     healAllLinks: () => void;
     setConnected: (connected: boolean) => void;
+    addServer: (nodeId: string, address: string, asLearner: boolean) => void;
+    removeServer: (nodeId: string) => void;
+    promoteLearner: (nodeId: string) => void;
     reset: () => void;
 }
 
 const wsRef = { current: null as WebSocket | null };
 export const setStoreWebSocket = (ws: WebSocket | null ) => { wsRef.current = ws; };
 
-const makeNode = (nodeId: string): NodeUIState => ({
+const makeNode = (nodeId: string, isLearner: boolean, address = ''): NodeUIState => ({
     nodeId,
+    address,
     role: "Follower",
     term: 0,
     commitIndex: 0,
@@ -41,7 +47,24 @@ const makeNode = (nodeId: string): NodeUIState => ({
     crashed: false,
     logEntries: [],
     snapshotIndex: 0,
+    isLearner: isLearner,
 })
+
+const defaultConfig: ClusterConfig = {
+    voters: [],
+    learners: [],
+}
+
+function applyConfig(nodes: Record<string, NodeUIState>, config: ClusterConfig): Record<string, NodeUIState> {
+    const newNodes = { ...nodes };
+    for (const nodeId of Object.keys(newNodes)) {
+        const isLearner = config.learners.some(m => m.id === nodeId);
+        const member = [...config.voters, ...config.learners].find(m => m.id === nodeId);
+        const address = member?.address ?? newNodes[nodeId].address;
+        newNodes[nodeId] = { ...newNodes[nodeId], isLearner, address };
+    }
+    return newNodes;
+}
 
 export const useRaftStore = create<RaftStore>((set, get) => ({
     nodeIds: [],
@@ -62,12 +85,17 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
     },
     snapshottingNodes: new Set<string>(),
     installingSnapshotNodes: new Set<string>(),
-    setNodeIds: (ids) => { 
+    clusterConfig: defaultConfig,
+    pendingConfigChange: false,
+
+    setNodeIds: (ids, config) => {
+        const configToApply = config ?? { voters: ids.map(id => ({ id, address: '' })), learners: [] };
         const nodes: Record<string, NodeUIState> = {};
         for (const id of ids) {
-            nodes[id] = makeNode(id);
+            const member = [...configToApply.voters, ...configToApply.learners].find(m => m.id === id);
+            nodes[id] = makeNode(id, configToApply.learners.some(m => m.id === id), member?.address ?? '');
         }
-        set({ nodeIds: ids, nodes });
+        set({ nodeIds: ids, nodes, clusterConfig: configToApply, pendingConfigChange: false });
     },
     pushEvent: (event) => set(
         (state) => ({ events: [event, ...state.events]
@@ -228,34 +256,39 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
             }
 
             case "NodeCrashed": {
-                set(state => ({
-                    nodes: {
-                        ...state.nodes,
-                        [event.nodeId]: {
-                            ...state.nodes[event.nodeId],
-                            crashed: true,
+                set(state => {
+                    const existingNode = state.nodes[event.nodeId];
+                    if (!existingNode) return state;
+                    return {
+                        nodes: {
+                            ...state.nodes,
+                            [event.nodeId]: { ...existingNode, crashed: true },
                         },
-                    },
-                    arrows: state.arrows.filter(a =>
-                        a.fromNodeId !== event.nodeId && a.toNodeId !== event.nodeId
-                    ),
-                }));
+                        arrows: state.arrows.filter(a =>
+                            a.fromNodeId !== event.nodeId && a.toNodeId !== event.nodeId
+                        ),
+                    };
+                });
                 break;
             }
 
             case "NodeRecovered": {
-                set(state => ({
-                    nodes: {
-                        ...state.nodes,
-                        [event.nodeId]: {
-                            ...state.nodes[event.nodeId],
-                            crashed: false,
-                            term: event.term,
-                            commitIndex: event.commitIndex,
-                            snapshotIndex: event.snapshotIndex,
+                set(state => {
+                    const existingNode = state.nodes[event.nodeId];
+                    const base = existingNode ?? makeNode(event.nodeId, false);
+                    return {
+                        nodes: {
+                            ...state.nodes,
+                            [event.nodeId]: {
+                                ...base,
+                                crashed: false,
+                                term: event.term,
+                                commitIndex: event.commitIndex,
+                                snapshotIndex: event.snapshotIndex,
+                            },
                         },
-                    },
-                }));
+                    };
+                });
                 break;
             }
 
@@ -356,6 +389,60 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                 }, 2000);
                 break;
             }
+
+            case "ConfigChanged": {
+                const newConfig: ClusterConfig = { voters: event.voters, learners: event.learners };
+                set(state => ({
+                    clusterConfig: newConfig,
+                    pendingConfigChange: !event.commited,
+                    nodes: applyConfig(state.nodes, newConfig),
+                }));
+                break;
+            }
+
+            case "ServerAdded": {
+                const newConfig = event.config;
+                set(state => {
+                    const existingNodes = state.nodes[event.addedNodeId];
+                    const addedMember = [...newConfig.voters, ...newConfig.learners].find(m => m.id === event.addedNodeId);
+                    const newNode = existingNodes
+                        ? { ...existingNodes, isLearner: event.asLearner, address: addedMember?.address ?? existingNodes.address }
+                        : makeNode(event.addedNodeId, event.asLearner, addedMember?.address ?? '');
+                    const newNodes = state.nodeIds.includes(event.addedNodeId)
+                        ? state.nodeIds
+                        : [...state.nodeIds, event.addedNodeId];
+                    return {
+                        clusterConfig: newConfig,
+                        nodeIds: newNodes,
+                        nodes: applyConfig({ ...state.nodes, [event.addedNodeId]: newNode }, newConfig)
+                    };
+                });
+                break;
+            }
+
+            case "ServerRemoved": {
+                const newConfig = event.config;
+                set(state => ({
+                    clusterConfig: newConfig,
+                    nodeIds: state.nodeIds.filter(id => id !== event.removedNodeId),
+                    nodes: (() => {
+                        const rest = Object.fromEntries(Object.entries(state.nodes).filter(([id]) => id !== event.removedNodeId));
+                        return applyConfig(rest, newConfig);
+                    })(),
+                    selectedNodeId: state.selectedNodeId === event.removedNodeId ? null : state.selectedNodeId,
+                }));
+                break;
+            }
+
+            case "LearnerPromoted": {
+                const newConfig = event.config;
+                set(state => ({
+                    clusterConfig: newConfig,
+                    nodes: applyConfig(state.nodes, newConfig),
+                }));
+                break;
+            }
+
         }
     },
     selectNode: (nodeId) => set({ selectedNodeId: nodeId }),
@@ -385,13 +472,26 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
         get().sendCommand({ type: "HealAllLinks" });
     },
     setConnected: (connected) => set({ connected }),
+    addServer: (nodeId, address, asLearner) => {
+        get().sendCommand({ type: "AddServer", nodeId, address, asLearner });
+    },
+    removeServer: (nodeId) => {
+        get().sendCommand({ type: "RemoveServer", nodeId });
+    },
+    promoteLearner: (nodeId) => {
+        get().sendCommand({ type: "PromoteLearner", nodeId });
+    },
     toggleMessageVisibility: (messageType) => set(state => ({
         messageVisibility: {
             ...state.messageVisibility,
             [messageType]: !state.messageVisibility[messageType],
         },
     })),
-    reset: () => set({ nodeIds: [], events: [], nodes: {}, arrows: [], selectedNodeId: null, dropRateByNode: {}, cutLinks: new Set(), totalEventCount: 0, messageVisibility: { RequestVote: true, AppendEntries: true, Heartbeat: true, Dropped: true, InstallSnapshot: true }, snapshottingNodes: new Set(), installingSnapshotNodes: new Set()}),
+    reset: () => set({ nodeIds: [], 
+        events: [], nodes: {}, arrows: [], selectedNodeId: null, dropRateByNode: {}, 
+        cutLinks: new Set(), totalEventCount: 0, 
+        messageVisibility: { RequestVote: true, AppendEntries: true, Heartbeat: true, Dropped: true, InstallSnapshot: true }, 
+        snapshottingNodes: new Set(), installingSnapshotNodes: new Set(), clusterConfig: defaultConfig, pendingConfigChange: false}),
     })
 )
 

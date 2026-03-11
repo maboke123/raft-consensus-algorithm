@@ -39,7 +39,8 @@ export function rpcMessageToGrpc(message: RPCMessage): { method: string, payload
             method: "InstallSnapshot",
             payload: {
                 ...message.payload,
-                data: message.payload.data
+                data: message.payload.data,
+                config: JSON.stringify(message.payload.config)
             }
         };
     }
@@ -109,6 +110,8 @@ export class GrpcTransport implements Transport {
     private readonly callTimeoutMs: number;
     private readonly shutdownTimeoutMs: number;
 
+    private cachedClientsCredentials: grpc.ChannelCredentials | null = null;
+
     constructor(
         private readonly nodeId: NodeId,
         private readonly port: number,
@@ -152,9 +155,13 @@ export class GrpcTransport implements Transport {
             );
 
             clientCredentials = grpc.credentials.createSsl(caCert, nodeKey, nodeCert);
+            this.cachedClientsCredentials = clientCredentials;
+
         } else {
             serverCredentials = grpc.ServerCredentials.createInsecure();
             clientCredentials = grpc.credentials.createInsecure();
+
+            this.cachedClientsCredentials = clientCredentials;
         }
 
         return new Promise((resolve, reject) => {
@@ -164,6 +171,7 @@ export class GrpcTransport implements Transport {
                 (err) => {
                     if (err) {
                         reject(new NetworkError(`Failed to bind gRPC server: ${err.message}`));
+                        return;
                     }
 
                     for (const [peerId, address] of Object.entries(this.peers)) {
@@ -245,10 +253,37 @@ export class GrpcTransport implements Transport {
         this.handler = handler;
     }
 
+    async addPeer(peerId: NodeId, address: string): Promise<void> {
+
+        if (!this.cachedClientsCredentials) {
+            throw new NetworkError("Transport is not initialized. Start the transport before adding peers.");
+        }
+
+        const existing = this.clients.get(peerId);
+        if (existing) {
+            existing.close();
+            this.clients.delete(peerId);
+        }
+
+        this.clients.set(
+            peerId,
+            new proto.raft.RaftService(address, this.cachedClientsCredentials, { 'grpc.enable_retries': 0 })
+        );
+    }
+
+    removePeer(peerId: NodeId): void {
+        const client = this.clients.get(peerId);
+        if (client) {
+            client.close();
+            this.clients.delete(peerId);
+        }
+    }
+
     private finishStop() {
         this.started = false;
         this.handler = null;
         this.server = null;
+        this.cachedClientsCredentials = null;
     }
 
     private buildServiceImplementation() {
@@ -323,7 +358,12 @@ export class GrpcTransport implements Transport {
                         direction: "request",
                         payload: {
                             ...call.request,
-                            data: Buffer.isBuffer(call.request.data) ? call.request.data : Buffer.from(call.request.data)
+                            data: Buffer.isBuffer(call.request.data)
+                                ? call.request.data 
+                                : Buffer.from(call.request.data),
+                            config: call.request.config
+                                ? JSON.parse(call.request.config)
+                                : { voters: [], learners: []}
                         }
                     };
                     

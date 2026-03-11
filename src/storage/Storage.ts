@@ -1,5 +1,5 @@
 import { StorageError } from "../util/Error";
-import { LogEntry } from "../log/LogEntry";
+import { LogEntry, LogEntryType } from "../log/LogEntry";
 
 export interface StorageOperation {
     type: "set" | "delete";
@@ -83,20 +83,40 @@ export class StorageCodec {
     }
 
     static serializeLogEntry(entry: LogEntry): object {
+        if (entry.type === LogEntryType.CONFIG) {
+            return {
+                term: entry.term,
+                index: entry.index,
+                type: entry.type,
+                config: JSON.stringify(entry.config)
+            };
+        }
+
         return {
             term: entry.term,
             index: entry.index,
+            type: entry.type,
             command: {
-                type: entry.command.type,
-                payload: Buffer.from(JSON.stringify(entry.command.payload)),
+                type: entry.command!.type,
+                payload: Buffer.from(JSON.stringify(entry.command!.payload)),
             },
         };
     }
 
     static deserializeLogEntry(raw: any): LogEntry {
+        if (raw.type === LogEntryType.CONFIG) {
+            return {
+                term: raw.term,
+                index: raw.index,
+                type: LogEntryType.CONFIG,
+                config: typeof raw.config === "string" ? JSON.parse(raw.config) : raw.config
+            };
+        }
+
         return {
             term: raw.term,
             index: raw.index,
+            type: LogEntryType.COMMAND,
             command: {
                 type: raw.command.type,
                 payload: JSON.parse(raw.command.payload.toString()),

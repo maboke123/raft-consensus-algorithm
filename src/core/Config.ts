@@ -1,8 +1,11 @@
+import { ClusterMember } from "../config/ClusterConfig";
+
 export type NodeId = string;
 
 export interface RaftConfig {
     nodeId: NodeId;
-    peerIds: NodeId[];
+    address: string;
+    peers: ClusterMember[];
     electionTimeoutMinMs: number;
     electionTimeoutMaxMs: number;
     heartbeatIntervalMs: number;
@@ -13,12 +16,20 @@ export function validateConfig(config: RaftConfig): void {
         throw new Error(`Invalid nodeId: ${config.nodeId}. nodeId must be a non-empty string.`);
     }
 
-    if(!Array.isArray(config.peerIds) || config.peerIds.some(peerId => typeof peerId !== 'string')) {
-        throw new Error(`Invalid peerIds: ${config.peerIds}. peerIds must be an array of strings.`);
+    if (!config.address || typeof config.address !== 'string') {
+        throw new Error(`Invalid address: ${config.address}. address must be a non-empty string.`);
     }
 
-    if (config.peerIds.includes(config.nodeId)) {
-        throw new Error(`Invalid peerIds: ${config.peerIds}. peerIds cannot include the nodeId.`);
+    if (!Array.isArray(config.peers)) {
+        throw new Error(`Invalid peers: ${config.peers}. peers must be an array of ClusterMember objects.`);
+    }
+
+    if (config.peers.some(peer => typeof peer.id !== 'string' || typeof peer.address !== 'string')) {
+        throw new Error(`Invalid peers: peers must contain objects with string id and address.`);
+    }
+
+    if (config.peers.some(peer => peer.id === config.nodeId)) {
+        throw new Error(`Invalid peers: peers cannot include the nodeId.`);
     }
 
     if (!Number.isInteger(config.electionTimeoutMinMs) || config.electionTimeoutMinMs <= 0) {
@@ -42,10 +53,11 @@ export function validateConfig(config: RaftConfig): void {
     }
 }
 
-export function createConfig(nodeId: NodeId, peerIds: NodeId[], electionTimeoutMinMs: number, electionTimeoutMaxMs: number, heartbeatIntervalMs: number): RaftConfig {
+export function createConfig(nodeId: NodeId, address: string, peers: ClusterMember[], electionTimeoutMinMs: number, electionTimeoutMaxMs: number, heartbeatIntervalMs: number): RaftConfig {
     const config: RaftConfig = {
         nodeId,
-        peerIds,
+        address,
+        peers,
         electionTimeoutMinMs,
         electionTimeoutMaxMs,
         heartbeatIntervalMs
