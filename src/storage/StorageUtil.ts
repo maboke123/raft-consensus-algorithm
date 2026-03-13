@@ -7,6 +7,22 @@ export interface StorageOperation {
     value?: Buffer;
 }
 
+export class StorageNumberUtil {
+    static assertSafeInteger(value: number, field: string): void {
+        if (!Number.isSafeInteger(value)) {
+            throw new StorageError(`${field} must be a safe integer, got ${value}`);
+        }
+    }
+
+    static bigIntToSafeNumber(value: bigint, field: string): number {
+        const num = Number(value);
+        if (!Number.isSafeInteger(num)) {
+            throw new StorageError(`${field} is outside JS safe integer range: ${value.toString()}`);
+        }
+        return num;
+    }
+}
+
 export class StorageCodec {
 
     static readonly encoding: BufferEncoding = "utf-8";

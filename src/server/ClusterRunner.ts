@@ -21,8 +21,14 @@ class NoOpStateMachine {
     async installSnapshot(snapshot: Buffer): Promise<void> {}
 }
 
+interface NodeEntry {
+    node: RaftNode;
+    storage: InMemoryNodeStorage;
+    address: string;
+}
+
 export class ClusterRunner implements ClusterRunnerInterface {
-    private nodes: Map<NodeId, RaftNode> = new Map();
+    private entries: Map<NodeId, NodeEntry> = new Map();
     private nodeIds: NodeId[] = [];
     private committedConfig: CommittedConfig = { voters: [], learners: [] };
 
@@ -38,39 +44,19 @@ export class ClusterRunner implements ClusterRunnerInterface {
 
         for (const nodeId of this.nodeIds) {
             const address = `localhost:${52000 + this.nodeIds.indexOf(nodeId)}`;
-
-            const peerMembers = this.nodeIds
-                .filter(id => id !== nodeId)
-                .map(id => ({ id, address: `localhost:${52000 + this.nodeIds.indexOf(id)}` }));
-
-            const config = createConfig(
-                nodeId,
-                address,
-                peerMembers,
-                timerConfig.electionTimeoutMin,
-                timerConfig.electionTimeoutMax,
-                timerConfig.heartbeatInterval
-            );
-
-            const nodeStorage = new InMemoryNodeStorage();
-            await nodeStorage.open();
-
-            const node = new RaftNode(
-                config,
-                nodeStorage,
-                new MockTransport(nodeId, new SystemRandom()),
-                new NoOpStateMachine(),
-                new SystemClock(),
-                new SystemRandom(),
-                undefined,
-                this.bus
-            );
-
-            this.nodes.set(nodeId, node);
+            const storage = new InMemoryNodeStorage();
+            await storage.open();
+            this.entries.set(nodeId, { node: null!, storage, address });
         }
 
-        for (const node of this.nodes.values()) {
-            await node.start();
+        for (const nodeId of this.nodeIds) {
+            const entry = this.entries.get(nodeId)!;
+            const node = this.buildNode(nodeId, entry.address, entry.storage);
+            entry.node = node;
+        }
+
+        for (const entry of this.entries.values()) {
+            await entry.node.start();
         }
 
         this.committedConfig = {
@@ -80,9 +66,9 @@ export class ClusterRunner implements ClusterRunnerInterface {
     }
 
     async stop(): Promise<void> {
-        for (const node of this.nodes.values()) {
-            if (node.isStarted()) {
-                await node.stop();
+        for (const entry of this.entries.values()) {
+            if (entry.node.isStarted()) {
+                await entry.node.stop();
             }
         }
         MockTransport.reset();
@@ -93,17 +79,18 @@ export class ClusterRunner implements ClusterRunnerInterface {
     }
 
     async crashNode(nodeId: NodeId): Promise<void> {
-        const node = this.nodes.get(nodeId);
-        if (node && node.isStarted()) {
-            await node.stop();
+        const entry = this.entries.get(nodeId);
+        if (entry && entry.node.isStarted()) {
+            await entry.node.stop();
         }
     }
 
     async recoverNode(nodeId: NodeId): Promise<void> {
-        const node = this.nodes.get(nodeId);
-        if (node && !node.isStarted()) {
-            await node.start();
-        }
+        const entry = this.entries.get(nodeId);
+        if (!entry || entry.node.isStarted()) return;
+
+        entry.node = this.buildNode(nodeId, entry.address, entry.storage);
+        await entry.node.start();
     }
 
     partitionNodes(groups: NodeId[][]): void {
@@ -120,8 +107,8 @@ export class ClusterRunner implements ClusterRunnerInterface {
 
     async submitCommand(command: Command, targetLeaderId?: NodeId): Promise<void> {
         const candidates = targetLeaderId
-            ? [this.nodes.get(targetLeaderId)!].filter(Boolean)
-            : Array.from(this.nodes.values()).filter(n => n.isStarted() && n.isLeader());
+            ? [this.entries.get(targetLeaderId)?.node!].filter(Boolean)
+            : Array.from(this.entries.values()).map(e => e.node).filter(n => n.isStarted() && n.isLeader());
 
         if (candidates.length === 0) {
             throw new Error('No leader available to submit command');
@@ -168,7 +155,7 @@ export class ClusterRunner implements ClusterRunnerInterface {
     }
 
     async addServer(nodeId: NodeId, address: string, asLearner: boolean): Promise<void> {
-        if (this.nodes.has(nodeId)) {
+        if (this.entries.has(nodeId)) {
             throw new Error(`Node ${nodeId} already exists in the cluster`);
         }
 
@@ -177,62 +164,37 @@ export class ClusterRunner implements ClusterRunnerInterface {
             throw new Error(`Invalid address format: ${address}`);
         }
 
-        const leader = Array.from(this.nodes.values()).find(n => n.isStarted() && n.isLeader());
+        const leader = Array.from(this.entries.values()).map(e => e.node).find(n => n.isStarted() && n.isLeader());
         if (!leader) {
             throw new Error('No leader available to add server');
         }
 
-        const { timerConfig } = this.options;
+        const storage = new InMemoryNodeStorage();
+        await storage.open();
 
-        const allCurrentMembers = [
-            ...this.committedConfig.voters,
-            ...this.committedConfig.learners
-        ];
+        const node = this.buildNode(nodeId, address, storage);
 
-        const peerMembers = allCurrentMembers.map(m => ({ id: m.id, address: m.address }));
-
-        const config = createConfig(
-            nodeId,
-            address,
-            peerMembers,
-            timerConfig.electionTimeoutMin,
-            timerConfig.electionTimeoutMax,
-            timerConfig.heartbeatInterval
-        );
-
-        const nodeStorage = new InMemoryNodeStorage();
-        await nodeStorage.open();
-
-        const node = new RaftNode(
-            config,
-            nodeStorage,
-            new MockTransport(nodeId, new SystemRandom()),
-            new NoOpStateMachine(),
-            new SystemClock(),
-            new SystemRandom(),
-            undefined,
-            this.bus
-        );
-
-        this.nodes.set(nodeId, node);
-        this.nodeIds.push(nodeId);
-
-        await node.start();
-
-        for (const [existingId, existingNode] of this.nodes) {
-            if (existingId !== nodeId && existingNode.isStarted()) {
-                await existingNode.registerPeer(nodeId, address);
+        for (const entry of this.entries.values()) {
+            if (entry.node.isStarted()) {
+                await entry.node.registerPeer(nodeId, address);
             }
         }
 
         const success = await leader.addServer(nodeId, address, asLearner);
 
         if (!success) {
-            this.nodes.delete(nodeId);
-            this.nodeIds.pop();
-            await node.stop();
+            for (const entry of this.entries.values()) {
+                if (entry.node.isStarted()) {
+                    await entry.node.removePeer(nodeId);
+                }
+            }
             throw new Error(`Failed to add server ${nodeId} to the cluster`);
         }
+
+        this.entries.set(nodeId, { node, storage, address });
+        this.nodeIds.push(nodeId);
+
+        await node.start();
 
         const member = { id: nodeId, address };
         if (asLearner) {
@@ -249,25 +211,25 @@ export class ClusterRunner implements ClusterRunnerInterface {
     }
 
     async removeServer(nodeId: NodeId): Promise<void> {
-        const leader = Array.from(this.nodes.values()).find(n => n.isStarted() && n.isLeader());
+        const leader = Array.from(this.entries.values()).map(e => e.node).find(n => n.isStarted() && n.isLeader());
         if (!leader) {
             throw new Error('No leader available to remove server');
         }
 
         await leader.removeServer(nodeId);
 
-        const node = this.nodes.get(nodeId);
-        if (node && node.isStarted()) {
-            await node.stop();
+        const entry = this.entries.get(nodeId);
+        if (entry && entry.node.isStarted()) {
+            await entry.node.stop();
         }
 
-        for (const [existingId, existingNode] of this.nodes) {
-            if (existingId !== nodeId && existingNode.isStarted()) {
-                await existingNode.removePeer(nodeId);
+        for (const [existingId, existingEntry] of this.entries) {
+            if (existingId !== nodeId && existingEntry.node.isStarted()) {
+                await existingEntry.node.removePeer(nodeId);
             }
         }
 
-        this.nodes.delete(nodeId);
+        this.entries.delete(nodeId);
         this.nodeIds = this.nodeIds.filter(id => id !== nodeId);
         this.committedConfig = {
             voters: this.committedConfig.voters.filter(m => m.id !== nodeId),
@@ -276,7 +238,7 @@ export class ClusterRunner implements ClusterRunnerInterface {
     }
 
     async promoteServer(nodeId: NodeId): Promise<void> {
-        const leader = Array.from(this.nodes.values()).find(n => n.isStarted() && n.isLeader());
+        const leader = Array.from(this.entries.values()).map(e => e.node).find(n => n.isStarted() && n.isLeader());
         if (!leader) {
             throw new Error('No leader available to promote server');
         }
@@ -292,12 +254,41 @@ export class ClusterRunner implements ClusterRunnerInterface {
         }
     }
 
+    private buildNode(nodeId: NodeId, address: string, storage: InMemoryNodeStorage): RaftNode {
+        const { timerConfig } = this.options;
+
+        const peerMembers = [
+            ...this.committedConfig.voters,
+            ...this.committedConfig.learners
+        ].filter(m => m.id !== nodeId);
+
+        const config = createConfig(
+            nodeId,
+            address,
+            peerMembers,
+            timerConfig.electionTimeoutMin,
+            timerConfig.electionTimeoutMax,
+            timerConfig.heartbeatInterval
+        );
+
+        return new RaftNode(
+            config,
+            storage,
+            new MockTransport(nodeId, new SystemRandom()),
+            new NoOpStateMachine(),
+            new SystemClock(),
+            new SystemRandom(),
+            undefined,
+            this.bus
+        );
+    }
+
     getCommittedConfig(): CommittedConfig {
         return this.committedConfig;
     }
 
     isLeader(nodeId: NodeId): boolean {
-        const node = this.nodes.get(nodeId);
-        return node !== undefined && node.isStarted() && node.isLeader();
+        const entry = this.entries.get(nodeId);
+        return entry !== undefined && entry.node.isStarted() && entry.node.isLeader();
     }
 }
