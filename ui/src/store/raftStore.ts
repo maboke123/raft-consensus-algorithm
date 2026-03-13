@@ -281,6 +281,7 @@ export const useRaftStore = create<RaftStore>((set, get) => ({
                             ...state.nodes,
                             [event.nodeId]: {
                                 ...base,
+                                role: "Follower",
                                 crashed: false,
                                 term: event.term,
                                 commitIndex: event.commitIndex,

@@ -465,6 +465,8 @@ export class RaftNode implements RaftNodeInterface {
                 try {
                     if (entry.type === LogEntryType.CONFIG) {
                         this.logger.info('skipping CONFIG entry');
+                    } else if (entry.type === LogEntryType.NOOP) 
+                        { this.logger.info('skipping NOOP entry');
                     } else {
                         const result = await this.applicationStateMachine.apply(entry.command!);
                         this.logger.info(`Applied log entry at index ${nextIndex} with command ${JSON.stringify(entry.command)}, result: ${JSON.stringify(result)}`);

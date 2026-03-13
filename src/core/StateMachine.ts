@@ -528,6 +528,13 @@ export class StateMachine implements StateMachineInterface {
 
         this.leaderState = new LeaderState(this.configManager.getAllPeers(this.nodeId), lastLogIndex);
 
+        try {
+            await this.logManager.appendNoOpEntry(currentTerm);
+            this.logger.info(`Node ${this.nodeId} appended initial no-op entry for term ${currentTerm}`);
+        } catch (err) {
+            this.logger.error(`Node ${this.nodeId} failed to append initial no-op entry as Leader: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
         this.timerManager.startHeartbeatTimer(() => this.sendHeartbeatsLocked());
 
         await this.sendHeartbeatsUnlocked();

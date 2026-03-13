@@ -434,6 +434,21 @@ export class LogManager implements LogManagerInterface {
         return null;
     }
 
+    async appendNoOpEntry(term: number): Promise<number> {
+
+        const idx = this.lastIndex + 1;
+        
+        const entry: LogEntry = {
+            index: idx,
+            term: term,
+            type: LogEntryType.NOOP
+        };
+
+        await this.appendEntry(entry);
+
+        return idx;
+    }
+
     private async safeStorage<T>(fn : () => Promise<T>, context: string): Promise<T> {
         try {
             return await fn();

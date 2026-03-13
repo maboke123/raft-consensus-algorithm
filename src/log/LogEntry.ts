@@ -8,6 +8,7 @@ export interface Command {
 export enum LogEntryType {
     COMMAND = 'COMMAND',
     CONFIG = 'CONFIG',
+    NOOP = 'NOOP'
 }
 
 export interface LogEntry {
@@ -43,8 +44,10 @@ export function validateLogEntry(entry: LogEntry): void {
         if (!Array.isArray(entry.config.voters) || !Array.isArray(entry.config.learners)) {
             throw new Error(`Invalid config: ${entry.config}. Voters and learners must be arrays`);
         }
+    } else if (entry.type === LogEntryType.NOOP) {
+        // no fields
     } else {
-        throw new Error(`Invalid log entry type: ${entry.type}. Type must be either COMMAND or CONFIG`);
+        throw new Error(`Invalid log entry type: ${entry.type}. Type must be either COMMAND, CONFIG or NOOP`);
     }
 }
 
@@ -94,6 +97,10 @@ export function entriesEqual(entry1: LogEntry, entry2: LogEntry): boolean {
         const config1 = JSON.stringify(entry1.config);
         const config2 = JSON.stringify(entry2.config);
         return config1 === config2;
+    }
+
+    if (entry1.type === LogEntryType.NOOP) {
+        return true;
     }
 
     return commandsEqual(entry1.command!, entry2.command!);

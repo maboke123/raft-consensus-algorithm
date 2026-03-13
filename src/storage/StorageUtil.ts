@@ -98,6 +98,14 @@ export class StorageCodec {
             };
         }
 
+        if (entry.type === LogEntryType.NOOP) {
+            return {
+                term: entry.term,
+                index: entry.index,
+                type: entry.type
+            };
+        }
+
         return {
             term: entry.term,
             index: entry.index,
@@ -116,6 +124,14 @@ export class StorageCodec {
                 index: raw.index,
                 type: LogEntryType.CONFIG,
                 config: typeof raw.config === "string" ? JSON.parse(raw.config) : raw.config
+            };
+        }
+
+        if (raw.type === LogEntryType.NOOP) {
+            return {
+                term: raw.term,
+                index: raw.index,
+                type: LogEntryType.NOOP
             };
         }
 
