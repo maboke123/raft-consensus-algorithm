@@ -57,6 +57,11 @@ export class StateMachine implements StateMachineInterface {
 
     private stateLock = new AsyncLock();
 
+    private lastLeaderContactAt: number = 0;
+    private preVoteInProgress: boolean = false;
+    private preVoteTerm: number = 0;
+    private preVotesReceived: Set<NodeId> = new Set();
+
     private onPeerDiscovered?: (peerId: NodeId, lastLogIndex: number) => void;
 
     constructor(
@@ -126,6 +131,23 @@ export class StateMachine implements StateMachineInterface {
     async handleRequestVote(from: NodeId, request: RequestVoteRequest): Promise<RequestVoteResponse> {
         return await this.stateLock.runExclusive(async () => {
             const currentTerm = this.persistentState.getCurrentTerm();
+            const selfIsVoter = this.configManager.isVoter(this.nodeId);
+            const candidateIsVoter = this.configManager.isVoter(request.candidateId);
+
+            if (request.preVote) {
+                if (request.term < currentTerm) {
+                    return { term: currentTerm, voteGranted: false };
+                }
+                if (!selfIsVoter || !candidateIsVoter) {
+                    return { term: currentTerm, voteGranted: false };
+                }
+                const noRecentLeader = this.lastLeaderContactAt === 0 ||
+                    performance.now() - this.lastLeaderContactAt >= this.config.electionTimeoutMinMs;
+                const isLogUpToDate = this.isLogUpToDate(request.lastLogIndex, request.lastLogTerm);
+                const granted = noRecentLeader && isLogUpToDate;
+                this.logger.info(`Node ${this.nodeId} ${granted ? 'granting' : 'denying'} pre-vote to ${request.candidateId} (noRecentLeader=${noRecentLeader}, logUpToDate=${isLogUpToDate})`);
+                return { term: currentTerm, voteGranted: granted };
+            }
 
             if (request.term < currentTerm) {
                 this.logger.info(`Node ${this.nodeId} received RequestVote from ${from} with stale term ${request.term}, current term is ${currentTerm}`);
@@ -149,6 +171,14 @@ export class StateMachine implements StateMachineInterface {
                 this.logger.info(`Node ${this.nodeId} received RequestVote from ${from} with higher term ${request.term}, updating term and becoming Follower`);
                 await this.becomeFollowerUnlocked(request.term, null);
 
+            }
+
+            if (!selfIsVoter || !candidateIsVoter) {
+                this.logger.info(`Node ${this.nodeId} cannot grant vote to ${request.candidateId} because voter membership check failed (selfIsVoter=${selfIsVoter}, candidateIsVoter=${candidateIsVoter})`);
+                return {
+                    term: this.persistentState.getCurrentTerm(),
+                    voteGranted: false
+                };
             }
 
             /* no step down ?
@@ -256,6 +286,7 @@ export class StateMachine implements StateMachineInterface {
             }
 
             this.logger.info(`Node ${this.nodeId} received AppendEntries from ${from} with higher term ${request.term}, updating term and becoming Follower`);
+            this.lastLeaderContactAt = performance.now();
             await this.becomeFollowerUnlocked(request.term, request.leaderId);
 
             if(!(await this.logManager.matchesPrevLog(request.prevLogIndex, request.prevLogTerm))) {
@@ -398,8 +429,22 @@ export class StateMachine implements StateMachineInterface {
             return;
         }
 
-        this.logger.info(`Node ${this.nodeId} election timeout, starting new election`);
-        await this.becomeCandidateUnlocked();
+        if (this.preVoteInProgress) {
+            this.logger.info(`Node ${this.nodeId} pre-vote timed out, restarting pre-vote`);
+            this.preVoteInProgress = false;
+            this.preVotesReceived.clear();
+            await this.startPreVoteUnlocked();
+            return;
+        }
+
+        if (this.currentState === RaftState.Candidate) {
+            this.logger.info(`Node ${this.nodeId} election timed out as candidate, restarting election`);
+            await this.becomeCandidateUnlocked();
+            return;
+        }
+
+        this.logger.info(`Node ${this.nodeId} election timeout, starting pre-vote phase`);
+        await this.startPreVoteUnlocked();
     }
 
     private async becomeFollowerUnlocked(term: number, leaderId: NodeId | null): Promise<void> {
@@ -434,6 +479,8 @@ export class StateMachine implements StateMachineInterface {
         }
 
         this.votesReceived.clear();
+        this.preVoteInProgress = false;
+        this.preVotesReceived.clear();
         this.currentLeader = leaderId;
 
         if (wasLeader) {
@@ -448,6 +495,11 @@ export class StateMachine implements StateMachineInterface {
     }
 
     private async becomeCandidateUnlocked(): Promise<void> {
+        if (!this.configManager.isVoter(this.nodeId)) {
+            this.logger.info(`Node ${this.nodeId} is not a voter, refusing transition to Candidate`);
+            await this.becomeFollowerUnlocked(this.persistentState.getCurrentTerm(), null);
+            return;
+        }
 
         const oldState = this.currentState;
 
@@ -498,6 +550,11 @@ export class StateMachine implements StateMachineInterface {
     }
 
     private async becomeLeaderUnlocked(): Promise<void> {
+        if (!this.configManager.isVoter(this.nodeId)) {
+            this.logger.warn(`Node ${this.nodeId} is not a voter, refusing transition to Leader`);
+            await this.becomeFollowerUnlocked(this.persistentState.getCurrentTerm(), null);
+            return;
+        }
         
         const oldState = this.currentState;
 
@@ -559,6 +616,97 @@ export class StateMachine implements StateMachineInterface {
         for (const peer of voters) {
             this.sendRequestVote(peer, request)
         }
+    }
+
+    private async startPreVoteUnlocked(): Promise<void> {
+        this.preVoteInProgress = true;
+        this.preVoteTerm = this.persistentState.getCurrentTerm();
+        this.preVotesReceived.clear();
+
+        if (this.configManager.isVoter(this.nodeId)) {
+            this.preVotesReceived.add(this.nodeId);
+        }
+
+        const quorumSize = this.configManager.getQuorumSize();
+        if (this.preVotesReceived.size >= quorumSize) {
+            this.preVoteInProgress = false;
+            await this.becomeCandidateUnlocked();
+            return;
+        }
+
+        this.timerManager.startElectionTimer(() => this.handleElectionTimeoutlocked());
+        await this.requestPreVotes();
+    }
+
+    private async requestPreVotes(): Promise<void> {
+        const currentTerm = this.persistentState.getCurrentTerm();
+        const lastLogIndex = this.logManager.getLastIndex();
+        const lastLogTerm = this.logManager.getLastTerm();
+
+        const request: RequestVoteRequest = {
+            term: currentTerm + 1,
+            candidateId: this.nodeId,
+            lastLogIndex,
+            lastLogTerm,
+            preVote: true
+        };
+
+        this.logger.info(`Node ${this.nodeId} sending pre-vote requests for term ${currentTerm + 1} to peers: ${this.configManager.getVoters().filter(p => p !== this.nodeId).join(", ")}`);
+
+        const voters = this.configManager.getVoters().filter(peerId => peerId !== this.nodeId);
+
+        for (const peer of voters) {
+            this.sendPreVote(peer, request);
+        }
+    }
+
+    private async sendPreVote(peer: NodeId, request: RequestVoteRequest): Promise<void> {
+        try {
+            const response = await this.rpcHandler.sendRequestVote(peer, request);
+            await this.handlePreVoteResponse(peer, response);
+        } catch (err) {
+            if (err instanceof Error) {
+                this.logger.error(`Node ${this.nodeId} error sending pre-vote to ${peer}: ${err.message}`);
+            } else {
+                this.logger.error(`Node ${this.nodeId} error sending pre-vote to ${peer}: ${String(err)}`);
+            }
+        }
+    }
+
+    private async handlePreVoteResponse(from: NodeId, response: RequestVoteResponse): Promise<void> {
+        await this.stateLock.runExclusive(async () => {
+            if (!this.preVoteInProgress) {
+                return;
+            }
+
+            if (this.currentState !== RaftState.Follower) {
+                this.preVoteInProgress = false;
+                return;
+            }
+
+            if (response.term > this.persistentState.getCurrentTerm()) {
+                this.logger.info(`Node ${this.nodeId} received higher term ${response.term} from ${from} during pre-vote, becoming Follower`);
+                await this.becomeFollowerUnlocked(response.term, null);
+                return;
+            }
+
+            if (this.persistentState.getCurrentTerm() !== this.preVoteTerm) {
+                this.preVoteInProgress = false;
+                return;
+            }
+
+            if (response.voteGranted) {
+                this.preVotesReceived.add(from);
+                this.logger.info(`Node ${this.nodeId} received pre-vote from ${from}, total pre-votes: ${this.preVotesReceived.size}/${this.configManager.getQuorumSize()}`);
+                if (this.preVotesReceived.size >= this.configManager.getQuorumSize()) {
+                    this.logger.info(`Node ${this.nodeId} received pre-vote quorum, starting actual election`);
+                    this.preVoteInProgress = false;
+                    await this.becomeCandidateUnlocked();
+                }
+            } else {
+                this.logger.info(`Node ${this.nodeId} received pre-vote denial from ${from}`);
+            }
+        });
     }
 
     private async sendRequestVote(peer: NodeId, request: RequestVoteRequest): Promise<void> {

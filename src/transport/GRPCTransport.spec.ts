@@ -93,6 +93,24 @@ describe('GRPCTransport.ts, rpcMessageToGrpc', () => {
         expect(result.payload).toEqual(requestVoteRequest.payload);
     });
 
+    it('should preserve preVote in request vote request payload', () => {
+        const preVoteRequest: RPCMessage = {
+            type: "RequestVote",
+            direction: "request",
+            payload: {
+                term: 2,
+                candidateId: "nodeA",
+                lastLogIndex: 3,
+                lastLogTerm: 2,
+                preVote: true
+            }
+        };
+
+        const result = rpcMessageToGrpc(preVoteRequest);
+        expect(result.method).toBe("RequestVote");
+        expect(result.payload).toEqual(preVoteRequest.payload);
+    });
+
     it('should map an append entries request correctly', () => {
         const result = rpcMessageToGrpc(appendEntriesRequest);
         expect(result.method).toBe("AppendEntries");
@@ -563,6 +581,36 @@ describe('GRPCTransport.ts, GrpcTransport', () => {
         await transportB.stop();
     });
 
+
+    it('preserves preVote field through send RequestVote request', async () => {
+        const { transportA, transportB } = makePair();
+
+        const requestVotePreVoteRequest: RPCMessage = {
+            type: "RequestVote",
+            direction: "request",
+            payload: {
+                term: 2,
+                candidateId: "nodeA",
+                lastLogIndex: 1,
+                lastLogTerm: 1,
+                preVote: true
+            }
+        };
+
+        transportB.onMessage(async (_from, message) => {
+            expect(message).toEqual(requestVotePreVoteRequest);
+            return requestVoteResponse;
+        });
+
+        await transportA.start();
+        await transportB.start();
+
+        const response = await transportA.send("nodeB", requestVotePreVoteRequest);
+        expect(response).toEqual(requestVoteResponse);
+
+        await transportA.stop();
+        await transportB.stop();
+    });
     it('should round trip a logEntry with primitive json payload', async () => {
         const { transportA, transportB } = makePair();
 

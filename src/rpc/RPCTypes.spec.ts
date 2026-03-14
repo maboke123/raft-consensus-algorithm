@@ -399,6 +399,24 @@ describe("RPCTypes.ts, validateRequestVoteRequest", () => {
     it('should throw error for negative lastLogTerm', () => {
         expect(() => validateRequestVoteRequest(invalidRequest8)).toThrow("Invalid lastLogTerm: -1. lastLogTerm must be a non-negative integer.");
     });
+
+    it('should not throw when preVote is true', () => {
+        expect(() => validateRequestVoteRequest({ ...validRequest, preVote: true })).not.toThrow();
+    });
+
+    it('should not throw when preVote is false', () => {
+        expect(() => validateRequestVoteRequest({ ...validRequest, preVote: false })).not.toThrow();
+    });
+
+    it('should not throw when preVote is undefined', () => {
+        expect(() => validateRequestVoteRequest({ ...validRequest })).not.toThrow();
+    });
+
+    it('should throw error when preVote is not a boolean', () => {
+        expect(() => validateRequestVoteRequest({ ...validRequest, preVote: 1 as any })).toThrow(
+            'Invalid preVote: 1. preVote must be a boolean if provided.'
+        );
+    });
 });
 
 describe('RPCTypes.ts, validateRequestVoteResponse', () => {
@@ -1061,5 +1079,3 @@ describe('RPCTypes.ts, validateRPCMessage', () => {
         expect(() => validateRPCMessage(invalidMessage1)).toThrow("Unknown RPC message type.");
     });
 });
-
-

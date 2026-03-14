@@ -7,6 +7,7 @@ export interface RequestVoteRequest {
     candidateId: NodeId;
     lastLogIndex: number;
     lastLogTerm: number;
+    preVote?: boolean;
 }
 
 export interface RequestVoteResponse {
@@ -132,6 +133,10 @@ export function validateRequestVoteRequest(request: RequestVoteRequest): void {
 
     if (!Number.isInteger(request.lastLogTerm) || request.lastLogTerm < 0) {
         throw new Error(`Invalid lastLogTerm: ${request.lastLogTerm}. lastLogTerm must be a non-negative integer.`);
+    }
+
+    if (request.preVote !== undefined && typeof request.preVote !== 'boolean') {
+        throw new Error(`Invalid preVote: ${request.preVote}. preVote must be a boolean if provided.`);
     }
 }
 
@@ -268,4 +273,3 @@ export function validateRPCMessage(message: RPCMessage): void {
             throw new Error('Unknown RPC message type.');
     }
 }
-

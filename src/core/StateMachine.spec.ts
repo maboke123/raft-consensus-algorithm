@@ -91,7 +91,7 @@ describe('StateMachine.ts, StateMachine', () => {
         warn: ReturnType<typeof vi.fn>,
     };
 
-    let config: { electionTimeoutMs: number, heartbeatIntervalMs: number };
+    let config: { electionTimeoutMinMs: number, electionTimeoutMaxMs: number, heartbeatIntervalMs: number };
 
     let onCommitIndexAdvanced: ReturnType<typeof vi.fn>;
 
@@ -186,7 +186,7 @@ describe('StateMachine.ts, StateMachine', () => {
             warn: vi.fn(),
         };
 
-        config = { electionTimeoutMs: 150, heartbeatIntervalMs: 50 };
+        config = { electionTimeoutMinMs: 150, electionTimeoutMaxMs: 300, heartbeatIntervalMs: 50 };
 
         onCommitIndexAdvanced = vi.fn();
 
@@ -279,6 +279,18 @@ describe('StateMachine.ts, StateMachine', () => {
     it('should vote for self when becoming candidate', async () => {
         await stateMachine.becomeCandidate();
         expect(persistentState.updateTermAndVote).toHaveBeenCalledWith(2, nodeId);
+    });
+
+    it('should skip self vote when second voter check is false during candidate transition', async () => {
+        configManager.isVoter.mockReset();
+        configManager.isVoter
+            .mockReturnValueOnce(true)
+            .mockReturnValueOnce(false);
+
+        await stateMachine.becomeCandidate();
+
+        const votesReceived = (stateMachine as any)['votesReceived'] as Set<string>;
+        expect(votesReceived.has(nodeId)).toBe(false);
     });
 
     it('should clear current leader when becoming candidate', async () => {
@@ -398,6 +410,16 @@ describe('StateMachine.ts, StateMachine', () => {
         persistentState.getVotedFor.mockReturnValue('node2');
         const response = await stateMachine.handleRequestVote('node2', { ...baseRequest, term: 1 });
         expect(response).toEqual({ term: 1, voteGranted: true });
+    });
+
+    it('should reject vote when candidate is not a voter', async () => {
+        configManager.isVoter.mockReset();
+        configManager.isVoter
+            .mockReturnValueOnce(true)
+            .mockReturnValueOnce(false);
+        const response = await stateMachine.handleRequestVote('node4', { ...baseRequest, candidateId: 'node4', term: 1 });
+        expect(response).toEqual({ term: 1, voteGranted: false });
+        expect(persistentState.updateTermAndVote).not.toHaveBeenCalledWith(1, 'node4');
     });
 
     it('should reject vote when candidate log is not up-to-date term', async () => {
@@ -620,7 +642,9 @@ describe('StateMachine.ts, StateMachine', () => {
     });
 
     it('should trigger election timeout and become candidate when election timer expires', async () => {
-        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        rpcHandler.sendRequestVote.mockImplementation((_peerId: string, request: any) =>
+            Promise.resolve({ term: 1, voteGranted: !!request.preVote })
+        );
         timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
             callback();
         });
@@ -680,7 +704,9 @@ describe('StateMachine.ts, StateMachine', () => {
     });
 
     it('should trigger election timeout callback registered in becomeFollowerUnlocked', async () => {
-        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        rpcHandler.sendRequestVote.mockImplementation((_peerId: string, request: any) =>
+            Promise.resolve({ term: 1, voteGranted: !!request.preVote })
+        );
         let captureCallback: (() => void) | null = null;
         timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
             captureCallback = callback;
@@ -700,7 +726,9 @@ describe('StateMachine.ts, StateMachine', () => {
     });
 
     it('"should trigger election timeout callback registered in becomeCandidateUnlocked', async () => {
-        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        rpcHandler.sendRequestVote.mockImplementation((_peerId: string, request: any) =>
+            Promise.resolve({ term: 1, voteGranted: !!request.preVote })
+        );
         let callCounter = 0;
         let captureCallback: (() => void) | null = null;
         timerManager.startElectionTimer.mockImplementation((callback: () => void) => {
@@ -1197,7 +1225,16 @@ describe('StateMachine.ts, StateMachine', () => {
 
         await stateMachine.becomeCandidate();
 
-        expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect(rpcHandler.sendRequestVote).not.toHaveBeenCalled();
+    });
+
+    it('should refuse transition to leader when node is not a voter', async () => {
+        configManager.isVoter.mockReturnValue(false);
+
+        await stateMachine.becomeLeader();
+
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
     });
 
     it('should step down after advancing commit index when node is no longer a voter', async () => {
@@ -1335,6 +1372,197 @@ describe('StateMachine.ts, StateMachine', () => {
         await vi.waitFor(() => {
             expect(onPeerDiscovered).toHaveBeenCalledWith('node4', expect.any(Number));
         });
+    });
+
+    it('should deny pre-vote when request term is below current term', async () => {
+        persistentState.getCurrentTerm.mockReturnValue(5);
+        const response = await stateMachine.handleRequestVote('node2', {
+            term: 3,
+            candidateId: 'node2',
+            lastLogIndex: 0,
+            lastLogTerm: 0,
+            preVote: true,
+        });
+        expect(response).toEqual({ term: 5, voteGranted: false });
+    });
+
+    it('should deny pre-vote when candidate is not a voter', async () => {
+        configManager.isVoter.mockImplementation((node: string) => node !== 'node4');
+        const response = await stateMachine.handleRequestVote('node4', {
+            term: 1,
+            candidateId: 'node4',
+            lastLogIndex: 0,
+            lastLogTerm: 0,
+            preVote: true,
+        });
+        expect(response).toEqual({ term: 1, voteGranted: false });
+    });
+
+    it('should grant pre-vote when no recent leader contact and candidate log is up-to-date', async () => {
+        const response = await stateMachine.handleRequestVote('node2', {
+            term: 1,
+            candidateId: 'node2',
+            lastLogIndex: 0,
+            lastLogTerm: 0,
+            preVote: true,
+        });
+        expect(response.voteGranted).toBe(true);
+    });
+
+    it('should deny pre-vote when there has been recent leader contact', async () => {
+        (stateMachine as any)['lastLeaderContactAt'] = performance.now();
+        const response = await stateMachine.handleRequestVote('node2', {
+            term: 1,
+            candidateId: 'node2',
+            lastLogIndex: 0,
+            lastLogTerm: 0,
+            preVote: true,
+        });
+        expect(response.voteGranted).toBe(false);
+    });
+
+    it('should deny pre-vote when candidate log is not up-to-date', async () => {
+        logManager.getLastTerm.mockReturnValue(3);
+        const response = await stateMachine.handleRequestVote('node2', {
+            term: 1,
+            candidateId: 'node2',
+            lastLogIndex: 0,
+            lastLogTerm: 2,
+            preVote: true,
+        });
+        expect(response.voteGranted).toBe(false);
+    });
+
+    it('should restart pre-vote when election timeout fires during pre-vote phase', async () => {
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        const callbacks: Array<() => void> = [];
+        timerManager.startElectionTimer.mockImplementation((callback: () => void) => {
+            callbacks.push(callback);
+        });
+        await stateMachine.becomeFollower(1, null);
+        (stateMachine as any)['preVoteInProgress'] = true;
+        const countBefore = callbacks.length;
+        await callbacks[callbacks.length - 1]();
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect(callbacks.length).toBeGreaterThan(countBefore);
+    });
+
+    it('should immediately become candidate during pre-vote when node is the sole voter', async () => {
+        configManager.getVoters.mockReturnValue([nodeId]);
+        configManager.getAllPeers.mockReturnValue([]);
+        configManager.getQuorumSize.mockReturnValue(1);
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        let captureCallback: (() => void) | null = null;
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            captureCallback = callback;
+        });
+        await stateMachine.becomeFollower(1, null);
+        expect(captureCallback).not.toBeNull();
+        await captureCallback!();
+        await vi.waitFor(() => {
+            expect(stateMachine.getCurrentState()).toBe(RaftState.Candidate);
+        });
+    });
+
+    it('should log error message when sendPreVote RPC throws an Error', async () => {
+        rpcHandler.sendRequestVote.mockImplementation((_peer: string, req: any) => {
+            if (req.preVote) return Promise.reject(new Error('pre-vote rpc failed'));
+            return Promise.resolve({ term: 1, voteGranted: false });
+        });
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            callback();
+        });
+        await stateMachine.becomeFollower(1, null);
+        await vi.waitFor(() => {
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('pre-vote rpc failed'));
+        });
+    });
+
+    it('should log String() error when sendPreVote RPC throws a non-Error value', async () => {
+        rpcHandler.sendRequestVote.mockImplementation((_peer: string, req: any) => {
+            if (req.preVote) return Promise.reject('pre-vote plain error');
+            return Promise.resolve({ term: 1, voteGranted: false });
+        });
+        timerManager.startElectionTimer.mockImplementationOnce((callback: () => void) => {
+            callback();
+        });
+        await stateMachine.becomeFollower(1, null);
+        await vi.waitFor(() => {
+            expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('pre-vote plain error'));
+        });
+    });
+
+    it('should cancel pre-vote when response arrives but node is no longer a follower', async () => {
+        (stateMachine as any)['preVoteInProgress'] = true;
+        (stateMachine as any)['preVoteTerm'] = 1;
+        (stateMachine as any)['currentState'] = RaftState.Candidate;
+        await (stateMachine as any)['handlePreVoteResponse']('node2', { term: 1, voteGranted: true });
+        expect((stateMachine as any)['preVoteInProgress']).toBe(false);
+    });
+
+    it('should step down to follower when pre-vote response has a higher term', async () => {
+        (stateMachine as any)['preVoteInProgress'] = true;
+        (stateMachine as any)['preVoteTerm'] = 1;
+        persistentState.getCurrentTerm.mockReturnValue(1);
+        await (stateMachine as any)['handlePreVoteResponse']('node2', { term: 5, voteGranted: false });
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect((stateMachine as any)['preVoteInProgress']).toBe(false);
+    });
+
+    it('should abandon pre-vote when current term has advanced past the pre-vote term', async () => {
+        (stateMachine as any)['preVoteInProgress'] = true;
+        (stateMachine as any)['preVoteTerm'] = 1;
+        persistentState.getCurrentTerm.mockReturnValue(2);
+        await (stateMachine as any)['handlePreVoteResponse']('node2', { term: 2, voteGranted: true });
+        expect((stateMachine as any)['preVoteInProgress']).toBe(false);
+    });
+
+    it('should log denial and remain in pre-vote phase when a peer denies the pre-vote', async () => {
+        (stateMachine as any)['preVoteInProgress'] = true;
+        (stateMachine as any)['preVoteTerm'] = 1;
+        persistentState.getCurrentTerm.mockReturnValue(1);
+        await (stateMachine as any)['handlePreVoteResponse']('node2', { term: 1, voteGranted: false });
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect((stateMachine as any)['preVoteInProgress']).toBe(true);
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('pre-vote denial'));
+    });
+
+    it('should not add self to pre-votes when node is not a voter', async () => {
+        configManager.isVoter.mockReturnValue(false);
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+        await (stateMachine as any)['startPreVoteUnlocked']();
+        const preVotesReceived = (stateMachine as any)['preVotesReceived'] as Set<string>;
+        expect(preVotesReceived.size).toBe(0);
+    });
+
+    it('should accumulate pre-votes without becoming candidate when quorum is not yet reached', async () => {
+        (stateMachine as any)['preVoteInProgress'] = true;
+        (stateMachine as any)['preVoteTerm'] = 1;
+        (stateMachine as any)['preVotesReceived'] = new Set([nodeId]);
+        configManager.getQuorumSize.mockReturnValue(3);
+        persistentState.getCurrentTerm.mockReturnValue(1);
+        await (stateMachine as any)['handlePreVoteResponse']('node2', { term: 1, voteGranted: true });
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect((stateMachine as any)['preVoteInProgress']).toBe(true);
+        expect((stateMachine as any)['preVotesReceived'].has('node2')).toBe(true);
+    });
+
+    it('should invoke pre-vote timer callback when pre-vote phase times out naturally', async () => {
+        const callbacks: Array<() => void> = [];
+        timerManager.startElectionTimer.mockImplementation((callback: () => void) => {
+            callbacks.push(callback);
+        });
+        rpcHandler.sendRequestVote.mockResolvedValue({ term: 1, voteGranted: false });
+
+        await stateMachine.becomeFollower(1, null);
+        expect(callbacks.length).toBe(1);
+
+        await callbacks[0]();
+        expect(callbacks.length).toBe(2);
+
+        await callbacks[1]();
+        expect(stateMachine.getCurrentState()).toBe(RaftState.Follower);
+        expect(callbacks.length).toBe(3);
     });
 
     it('should skip addPeer loop when leaderState becomes null during config commit', async () => {

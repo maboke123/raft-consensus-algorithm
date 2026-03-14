@@ -13,6 +13,7 @@ message RequestVoteRequest {
     string candidateId = 2;
     int32 lastLogIndex = 3;
     int32 lastLogTerm  = 4;
+    bool preVote       = 5;
 }
 
 message RequestVoteResponse {
