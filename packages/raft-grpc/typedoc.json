@@ -1,6 +1,5 @@
 {
   "entryPoints": ["src/index.ts"],
-  "out": "../../docs/raft-grpc",
   "tsconfig": "./tsconfig.json",
   "excludePrivate": true,
   "excludeInternal": true

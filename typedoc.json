@@ -1,0 +1,9 @@
+{
+  "name": "Raft Consensus Algorithm",
+  "entryPointStrategy": "packages",
+  "entryPoints": [
+    "packages/raft-core",
+    "packages/raft-grpc"
+  ],
+  "out": "docs"
+}

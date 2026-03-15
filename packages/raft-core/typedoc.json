@@ -1,6 +1,5 @@
 {
   "entryPoints": ["src/index.ts"],
-  "out": "../../docs/raft-core",
   "tsconfig": "./tsconfig.json",
   "excludePrivate": true,
   "excludeInternal": true
