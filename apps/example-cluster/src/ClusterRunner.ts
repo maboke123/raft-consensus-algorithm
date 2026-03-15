@@ -6,7 +6,7 @@ import {
     RaftEventBus,
     RaftNode,
 } from "@maboke123/raft-core";
-import { MockTransport, SeededRandom } from "@maboke123/raft-core/dist/testing";
+import { MockTransport, SeededRandom } from "@maboke123/raft-core/testing";
 import { ClusterRunnerInterface, CommittedConfig } from "./ClusterRunnerInterface";
 
 interface TimerConfig {

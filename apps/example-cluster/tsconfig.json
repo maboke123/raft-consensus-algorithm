@@ -4,7 +4,9 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "declaration": false,
-    "declarationMap": false
+    "declarationMap": false,
+    "moduleResolution": "node16",
+    "module": "node16"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

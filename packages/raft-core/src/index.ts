@@ -16,7 +16,7 @@ export type { NodeStorage } from "./storage/interfaces/NodeStorage";
 export type { LogStorage, LogStorageMeta } from "./storage/interfaces/LogStorage";
 export type { MetaStorage, MetaData } from "./storage/interfaces/MetaStorage";
 export type { SnapshotStorage } from "./storage/interfaces/SnapshotStorage";
-export type { ConfigStorage } from "./storage/interfaces/ConfigStorage";
+export type { ConfigStorage, ConfigStorageData } from "./storage/interfaces/ConfigStorage";
 
 export { InMemoryNodeStorage } from "./storage/inMemory/InMemoryNodeStorage";
 export { DiskNodeStorage } from "./storage/disk/DiskNodeStorage";
