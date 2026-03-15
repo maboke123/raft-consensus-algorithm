@@ -1,5 +1,8 @@
 name: Deploy Docs
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches:
@@ -29,6 +32,10 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - run: npm run build --workspace @maboke123/raft-core
+
+      - run: npm run build --workspace @maboke123/raft-grpc
 
       - run: npm run docs
 
