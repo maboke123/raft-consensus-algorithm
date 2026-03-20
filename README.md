@@ -2,7 +2,7 @@
 
 A TypeScript implementation of the [Raft consensus algorithm](https://raft.github.io/), structured as a monorepo.
 
-Raft is a protocol for building fault-tolerant distributed systems. A cluster of nodes elects a leader, replicates a log of commands across all nodes, and applies those commands to a state machine — even when some nodes crash or become unreachable. This implementation covers leader election, log replication, snapshots, pre-vote, and joint-consensus cluster membership changes.
+Raft is a protocol for building fault-tolerant distributed systems. A cluster of nodes elects a leader, replicates a log of commands across all nodes, and applies those commands to a state machine — even when some nodes crash or become unreachable. This implementation covers leader election, log replication, snapshots, pre-vote, and single-server cluster membership changes.
 
 ## Documentation
 
