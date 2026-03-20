@@ -122,7 +122,7 @@ See the [raft-core README](./packages/raft-core/README.md) for the full usage gu
 ## Implementation notes
 
 - **Pre-vote** — nodes run a pre-vote phase before starting a real election, preventing disruptions from nodes rejoining after a partition
-- **Joint consensus** — cluster membership changes use the joint consensus approach from the Raft paper, allowing safe addition and removal of nodes without downtime
+- **Cluster membership changes** — uses the single-server-at-a-time approach from the Raft paper, allowing safe addition and removal of one node at a time without downtime
 - **Snapshots** — the leader periodically takes snapshots of the application state machine and sends them to lagging followers via `InstallSnapshot` RPC
 - **Pluggable storage** — storage is split into four focused interfaces (`MetaStorage`, `LogStorage`, `SnapshotStorage`, `ConfigStorage`) so you can implement exactly the backend you need
 - **Pluggable transport** — the `Transport` interface is minimal so you can bring any communication layer
