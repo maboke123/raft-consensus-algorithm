@@ -21,8 +21,13 @@ export function ClusterPanel() {
     const upCount    = allNodes.filter(n => !n.crashed).length;
     const totalCount = allNodes.length;
     const term       = Math.max(0, ...allNodes.map(n => n.term));
-    const majority   = Math.floor(totalCount / 2) + 1;
-    const healthy    = upCount >= majority;
+    const voterCount = clusterConfig.voters.length;
+    const voterQuorum = voterCount === 0 ? 0 : Math.floor(voterCount / 2) + 1;
+    const votersUpCount = clusterConfig.voters.filter(v => {
+        const node = nodes[v.id];
+        return node && !node.crashed;
+    }).length;
+    const healthy    = voterQuorum === 0 || votersUpCount >= voterQuorum;
 
     const selectedNodeId = useRaftStore(s => s.selectedNodeId);
     const detailWidth = selectedNodeId ? 330 : 0;
@@ -106,7 +111,7 @@ export function ClusterPanel() {
                         )}
 
                         <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 2 }}>
-                            voters ({clusterConfig.voters.length}, quorum {majority})
+                            voters ({clusterConfig.voters.length}, quorum {voterQuorum})
                         </div>
                         {clusterConfig.voters.length === 0
                             ? <span style={{ color: '#8b949e', fontSize: 11 }}>—</span>
