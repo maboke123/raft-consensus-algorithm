@@ -1,6 +1,6 @@
 {
   "name": "@maboke123/raft-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A TypeScript implementation of the Raft consensus algorithm",
   "repository": {
     "type": "git",
