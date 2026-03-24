@@ -4,7 +4,7 @@ import { ClusterRunnerGRPC } from "./ClusterRunnerGRPC";
 import { ClusterRunnerInterface } from "./ClusterRunnerInterface";
 import { WsServer } from "./WsServer";
 
-const MODE: "memory" | "grpc" = "grpc";
+const MODE: "memory" | "grpc" = "memory";
 
 const PORT = 4001;
 const NODE_COUNT = 3;
