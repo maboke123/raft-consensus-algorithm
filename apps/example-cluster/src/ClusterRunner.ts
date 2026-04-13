@@ -274,7 +274,8 @@ export class ClusterRunner implements ClusterRunnerInterface {
             peerMembers,
             timerConfig.electionTimeoutMin,
             timerConfig.electionTimeoutMax,
-            timerConfig.heartbeatInterval
+            timerConfig.heartbeatInterval,
+            10
         );
 
         return new RaftNode({
