@@ -24,6 +24,28 @@ TypeDoc API documentation is published on GitHub Pages:
 | [`example-cluster`](./apps/example-cluster) | A runnable 3-node cluster with a WebSocket server for the devtools UI |
 | [`devtools`](./apps/devtools) | A React visualizer that shows live cluster state, elections, and message flow |
 
+## Screenshots
+
+### Cluster overview
+
+![Raft visualizer overview](./assets/overview.png)
+
+### Pre-vote
+
+![Raft pre-vote screen](./assets/prevote.png)
+
+### Taking snapshot
+
+![Raft taking snapshot screen](./assets/takingSnapshot.png)
+
+### Installing snapshot
+
+![Raft installing snapshot screen](./assets/installingSnapshot.png)
+
+### Cutting log links
+
+![Raft cutting log links screen](./assets/cutLinks.png)
+
 ## Repository structure
 
 ```
