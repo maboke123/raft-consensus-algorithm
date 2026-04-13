@@ -17,6 +17,7 @@
 !*.yml
 !LICENSE
 !*.sh
+!*.png
 
 **/node_modules/
 **/dist/
